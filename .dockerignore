@@ -1,0 +1,17 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+data
+agent-data
+frontend/node_modules
+frontend/dist
+web
+tests
+.chrome-test-profile
+agent-data-check
+artifacts
+backups
+*.png
+.terminal-assets

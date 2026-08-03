@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.db
+data/
+logs/
+backups/
+artifacts/
+.env
+.terminal-assets/
+frontend/node_modules/
+frontend/dist/
+*.tar
+*.tar.gz
+*.whl
