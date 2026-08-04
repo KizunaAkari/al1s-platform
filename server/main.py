@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
+from .compatibility import analyze_script_compatibility
 from .emailer import (
     SMTPConfiguration,
     environment_configuration,
@@ -425,7 +426,7 @@ def validate_task_script(content: str, allowed_types: set[str] | None = None) ->
     return document
 
 
-def public_script(item: dict) -> dict:
+def public_script(item: dict, device: dict | None = None) -> dict:
     value = dict(item)
     try:
         document = validate_task_script(
@@ -440,6 +441,11 @@ def public_script(item: dict) -> dict:
         value["cleanup_on_finish"] = False
         value["valid"] = False
         value["validation_error"] = str(exc.detail)
+    if device is not None:
+        value["compatibility"] = analyze_script_compatibility(
+            str(item.get("content") or ""),
+            device,
+        )
     return value
 
 
@@ -1873,8 +1879,9 @@ def open_editor(agent_id: str):
 
 @app.get("/api/agents/{agent_id}/scripts")
 def scripts(agent_id: str):
-    get_agent_or_404(agent_id)
-    return [public_script(item) for item in store.list_scripts(agent_id)]
+    agent = get_agent_or_404(agent_id)
+    device = (agent.get("metadata") or {}).get("device")
+    return [public_script(item, device) for item in store.list_scripts(agent_id)]
 
 
 @app.get("/api/agents/{agent_id}/script-categories")
@@ -1901,15 +1908,17 @@ def script_audit(agent_id: str, limit: int = Query(default=200, ge=1, le=1000)):
 
 @app.get("/api/agents/{agent_id}/scripts/{name}")
 def script(agent_id: str, name: str):
+    agent = get_agent_or_404(agent_id)
     item = store.get_script(agent_id, name)
     if not item:
         raise HTTPException(status_code=404, detail="script not found")
-    return public_script(item)
+    device = (agent.get("metadata") or {}).get("device")
+    return public_script(item, device)
 
 
 @app.put("/api/agents/{agent_id}/scripts/{name}")
 def save_script(agent_id: str, name: str, payload: ScriptPayload):
-    get_agent_or_404(agent_id)
+    agent = get_agent_or_404(agent_id)
     script_name = normalized_script_name(name)
     document = validate_task_script(payload.content, {"standard", "module_start", "module_process"})
     resolve_failure_retry_scripts(agent_id, payload.content, reference_chain=(script_name,))
@@ -1925,12 +1934,12 @@ def save_script(agent_id: str, name: str, payload: ScriptPayload):
         category_package,
         source_package,
         source_activity,
-    ))
+    ), (agent.get("metadata") or {}).get("device"))
 
 
 @app.post("/api/agents/{agent_id}/scripts/import")
 def import_script(agent_id: str, payload: ScriptImportPayload):
-    get_agent_or_404(agent_id)
+    agent = get_agent_or_404(agent_id)
     script_name = normalized_script_name(payload.name)
     document = validate_task_script(payload.content, {"standard", "module_start", "module_process"})
     resolve_failure_retry_scripts(agent_id, payload.content, reference_chain=(script_name,))
@@ -1948,19 +1957,19 @@ def import_script(agent_id: str, payload: ScriptImportPayload):
         source_package,
         source_activity,
         audit_operation="uploaded",
-    ))
+    ), (agent.get("metadata") or {}).get("device"))
 
 
 @app.patch("/api/agents/{agent_id}/scripts/{name}/category")
 def move_script_category(agent_id: str, name: str, payload: ScriptCategoryMove):
-    get_agent_or_404(agent_id)
+    agent = get_agent_or_404(agent_id)
     category_package = None
     if payload.category_package:
         category_package, _activity = normalized_android_component(payload.category_package)
     item = store.move_script_category(agent_id, name, category_package)
     if not item:
         raise HTTPException(status_code=404, detail="script not found")
-    return public_script(item)
+    return public_script(item, (agent.get("metadata") or {}).get("device"))
 
 
 @app.get("/api/agents/{agent_id}/scripts/{name}/download")

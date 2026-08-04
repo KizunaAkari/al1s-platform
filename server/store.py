@@ -10,6 +10,8 @@ from typing import Any
 
 from .config import settings
 
+GLOBAL_SCRIPT_SCOPE = "__global__"
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -102,6 +104,7 @@ class Store:
                 category_package TEXT,
                 source_package TEXT,
                 source_activity TEXT,
+                source_agent_id TEXT,
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY(agent_id, name)
             );
@@ -206,7 +209,7 @@ class Store:
             if "confirmed" not in failure_columns:
                 db.execute("ALTER TABLE failure_records ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 0")
             script_columns = {row["name"] for row in db.execute("PRAGMA table_info(scripts)")}
-            for name in ("category_package", "source_package", "source_activity"):
+            for name in ("category_package", "source_package", "source_activity", "source_agent_id"):
                 if name not in script_columns:
                     db.execute(f"ALTER TABLE scripts ADD COLUMN {name} TEXT")
             legacy_scripts = db.execute(
@@ -250,9 +253,90 @@ class Store:
                         script["name"],
                     ),
                 )
+            self._migrate_scripts_to_global(db)
+            self._migrate_script_categories_to_global(db)
             db.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status_schedule ON tasks(status, scheduled_for, created_at)")
             db.execute("CREATE INDEX IF NOT EXISTS idx_tasks_batch ON tasks(batch_id, batch_sequence, created_at)")
             db.execute("CREATE INDEX IF NOT EXISTS idx_scripts_category ON scripts(agent_id, category_package, name)")
+
+    @staticmethod
+    def _global_script_name(db: sqlite3.Connection, name: str, content: str, source_agent_id: str) -> str:
+        """Keep conflicting legacy names instead of dropping either script."""
+        candidate = name
+        existing = db.execute(
+            "SELECT content FROM scripts WHERE agent_id=? AND name=?",
+            (GLOBAL_SCRIPT_SCOPE, candidate),
+        ).fetchone()
+        if not existing or existing["content"] == content:
+            return candidate
+        stem, dot, suffix = name.rpartition(".")
+        base = stem if dot else name
+        extension = f".{suffix}" if dot else ""
+        candidate = f"{base} [{source_agent_id}]{extension}"
+        index = 2
+        while db.execute(
+            "SELECT 1 FROM scripts WHERE agent_id=? AND name=?",
+            (GLOBAL_SCRIPT_SCOPE, candidate),
+        ).fetchone():
+            candidate = f"{base} [{source_agent_id}-{index}]{extension}"
+            index += 1
+        return candidate
+
+    @classmethod
+    def _migrate_scripts_to_global(cls, db: sqlite3.Connection):
+        rows = db.execute(
+            "SELECT * FROM scripts WHERE agent_id<>? ORDER BY updated_at,name",
+            (GLOBAL_SCRIPT_SCOPE,),
+        ).fetchall()
+        for row in rows:
+            target_name = cls._global_script_name(
+                db,
+                row["name"],
+                row["content"],
+                row["agent_id"],
+            )
+            if db.execute(
+                "SELECT 1 FROM scripts WHERE agent_id=? AND name=? AND content=?",
+                (GLOBAL_SCRIPT_SCOPE, target_name, row["content"]),
+            ).fetchone():
+                continue
+            db.execute(
+                """INSERT INTO scripts(
+                    agent_id,name,content,category_package,source_package,source_activity,
+                    source_agent_id,updated_at
+                ) VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    GLOBAL_SCRIPT_SCOPE,
+                    target_name,
+                    row["content"],
+                    row["category_package"],
+                    row["source_package"],
+                    row["source_activity"],
+                    row["agent_id"],
+                    row["updated_at"],
+                ),
+            )
+
+    @staticmethod
+    def _migrate_script_categories_to_global(db: sqlite3.Connection):
+        rows = db.execute(
+            "SELECT * FROM script_categories WHERE agent_id<>? ORDER BY updated_at,package_name",
+            (GLOBAL_SCRIPT_SCOPE,),
+        ).fetchall()
+        for row in rows:
+            db.execute(
+                """INSERT INTO script_categories(
+                    agent_id,package_name,display_name,created_at,updated_at
+                ) VALUES(?,?,?,?,?)
+                ON CONFLICT(agent_id,package_name) DO NOTHING""",
+                (
+                    GLOBAL_SCRIPT_SCOPE,
+                    row["package_name"],
+                    row["display_name"],
+                    row["created_at"],
+                    row["updated_at"],
+                ),
+            )
 
     @staticmethod
     def decode(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -272,23 +356,85 @@ class Store:
 
     def upsert_agent(self, agent: dict[str, Any]) -> dict[str, Any]:
         now = utc_now()
-        with self.connect() as db:
-            db.execute("""INSERT INTO agents(id,name,os,address,capabilities,status,last_seen,metadata)
-                VALUES(?,?,?,?,?,?,?,?)
-                ON CONFLICT(id) DO UPDATE SET name=excluded.name, os=excluded.os,
-                address=excluded.address, capabilities=excluded.capabilities,
-                status='online', last_seen=excluded.last_seen, metadata=excluded.metadata""",
-                (agent["id"], agent["name"], agent["os"], agent.get("address"),
-                 json.dumps(agent.get("capabilities", {})), "online", now,
-                 json.dumps(agent.get("metadata", {}))))
-            row = db.execute("SELECT * FROM agents WHERE id=?", (agent["id"],)).fetchone()
+        recovered = 0
+        metadata = agent.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        new_instance_id = str(metadata.get("agent_instance_id") or "")
+        with self._command_condition:
+            with self.connect() as db:
+                previous = db.execute(
+                    "SELECT metadata FROM agents WHERE id=?",
+                    (agent["id"],),
+                ).fetchone()
+                previous_metadata: dict[str, Any] = {}
+                if previous:
+                    try:
+                        decoded = json.loads(previous["metadata"])
+                        if isinstance(decoded, dict):
+                            previous_metadata = decoded
+                    except (TypeError, json.JSONDecodeError):
+                        pass
+                previous_instance_id = str(previous_metadata.get("agent_instance_id") or "")
+
+                # A claimed command belongs to the process that polled it.  A
+                # container replacement keeps the SQLite database but not that
+                # process, so leave those commands permanently stuck only when
+                # the same instance is registering again.
+                if previous and previous_instance_id != new_instance_id:
+                    claimed = db.execute(
+                        "SELECT id,payload FROM commands WHERE agent_id=? AND status='claimed'",
+                        (agent["id"],),
+                    ).fetchall()
+                    for command in claimed:
+                        db.execute(
+                            "UPDATE commands SET status='pending',claimed_at=NULL WHERE id=? AND status='claimed'",
+                            (command["id"],),
+                        )
+                        try:
+                            task_id = json.loads(command["payload"]).get("task_id")
+                        except (TypeError, json.JSONDecodeError):
+                            task_id = None
+                        if task_id:
+                            db.execute(
+                                "UPDATE tasks SET status='queued',started_at=NULL WHERE id=? AND status='running'",
+                                (task_id,),
+                            )
+                    recovered = len(claimed)
+
+                db.execute("""INSERT INTO agents(id,name,os,address,capabilities,status,last_seen,metadata)
+                    VALUES(?,?,?,?,?,?,?,?)
+                    ON CONFLICT(id) DO UPDATE SET name=excluded.name, os=excluded.os,
+                    address=excluded.address, capabilities=excluded.capabilities,
+                    status='online', last_seen=excluded.last_seen, metadata=excluded.metadata""",
+                    (agent["id"], agent["name"], agent["os"], agent.get("address"),
+                     json.dumps(agent.get("capabilities", {})), "online", now,
+                     json.dumps(metadata)))
+                row = db.execute("SELECT * FROM agents WHERE id=?", (agent["id"],)).fetchone()
+            if recovered:
+                self._command_condition.notify_all()
         return self.decode(row)
 
     def heartbeat(self, agent_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         now = utc_now()
         with self.connect() as db:
+            row = db.execute("SELECT metadata FROM agents WHERE id=?", (agent_id,)).fetchone()
+            current: dict[str, Any] = {}
+            if row:
+                try:
+                    decoded = json.loads(row["metadata"])
+                    if isinstance(decoded, dict):
+                        current = decoded
+                except (TypeError, json.JSONDecodeError):
+                    pass
+            merged = dict(current)
+            for key, value in payload.items():
+                if key == "metadata" and isinstance(value, dict) and isinstance(merged.get(key), dict):
+                    merged[key] = {**merged[key], **value}
+                else:
+                    merged[key] = value
             db.execute("UPDATE agents SET status='online', last_seen=?, metadata=? WHERE id=?",
-                       (now, json.dumps(payload), agent_id))
+                       (now, json.dumps(merged), agent_id))
             row = db.execute("SELECT * FROM agents WHERE id=?", (agent_id,)).fetchone()
         return self.decode(row)
 
@@ -1164,30 +1310,33 @@ class Store:
         source_package = source_package or None
         source_activity = source_activity or None
         now = utc_now()
+        scope = GLOBAL_SCRIPT_SCOPE
         with self.connect() as db:
             previous = db.execute(
                 "SELECT * FROM scripts WHERE agent_id=? AND name=?",
-                (agent_id, name),
+                (scope, name),
             ).fetchone()
             if category_package:
-                self._ensure_script_category(db, agent_id, category_package)
+                self._ensure_script_category(db, scope, category_package)
             db.execute(
                 """INSERT INTO scripts(
-                    agent_id,name,content,category_package,source_package,source_activity,updated_at
-                ) VALUES(?,?,?,?,?,?,?)
+                    agent_id,name,content,category_package,source_package,source_activity,source_agent_id,updated_at
+                ) VALUES(?,?,?,?,?,?,?,?)
                 ON CONFLICT(agent_id,name) DO UPDATE SET
                     content=excluded.content,
                     category_package=excluded.category_package,
                     source_package=excluded.source_package,
                     source_activity=excluded.source_activity,
+                    source_agent_id=excluded.source_agent_id,
                     updated_at=excluded.updated_at""",
                 (
-                    agent_id,
+                    scope,
                     name,
                     content,
                     category_package,
                     source_package,
                     source_activity,
+                    agent_id,
                     now,
                 ),
             )
@@ -1195,7 +1344,7 @@ class Store:
             operation = audit_operation if audit_operation != "saved" else ("updated" if previous else "created")
             self._insert_script_audit(
                 db,
-                agent_id,
+                scope,
                 name,
                 operation,
                 from_category=previous_category,
@@ -1209,7 +1358,7 @@ class Store:
             if previous and previous_category != category_package:
                 self._insert_script_audit(
                     db,
-                    agent_id,
+                    scope,
                     name,
                     "category_changed",
                     from_category=previous_category,
@@ -1224,11 +1373,14 @@ class Store:
                   ON script_categories.agent_id=scripts.agent_id
                  AND script_categories.package_name=scripts.category_package
                 WHERE scripts.agent_id=? AND scripts.name=?""",
-                (agent_id, name),
+                (scope, name),
             ).fetchone()
-        return dict(row)
+        result = dict(row)
+        result["agent_id"] = agent_id
+        return result
 
     def get_script(self, agent_id: str, name: str):
+        scope = GLOBAL_SCRIPT_SCOPE
         with self.connect() as db:
             row = db.execute(
                 """SELECT scripts.*, script_categories.display_name AS category_name
@@ -1237,13 +1389,18 @@ class Store:
                   ON script_categories.agent_id=scripts.agent_id
                  AND script_categories.package_name=scripts.category_package
                 WHERE scripts.agent_id=? AND scripts.name=?""",
-                (agent_id, name),
+                (scope, name),
             ).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        result = dict(row)
+        result["agent_id"] = agent_id
+        return result
 
     def list_scripts(self, agent_id: str):
+        scope = GLOBAL_SCRIPT_SCOPE
         with self.connect() as db:
-            return [
+            result = [
                 dict(row)
                 for row in db.execute(
                     """SELECT scripts.*, script_categories.display_name AS category_name
@@ -1253,13 +1410,17 @@ class Store:
                      AND script_categories.package_name=scripts.category_package
                     WHERE scripts.agent_id=?
                     ORDER BY COALESCE(script_categories.display_name, ''), scripts.name""",
-                    (agent_id,),
+                    (scope,),
                 )
             ]
+        for item in result:
+            item["agent_id"] = agent_id
+        return result
 
     def list_script_categories(self, agent_id: str):
+        scope = GLOBAL_SCRIPT_SCOPE
         with self.connect() as db:
-            return [
+            result = [
                 dict(row)
                 for row in db.execute(
                     """SELECT category.*, COUNT(scripts.name) AS script_count
@@ -1270,27 +1431,31 @@ class Store:
                     WHERE category.agent_id=?
                     GROUP BY category.agent_id, category.package_name
                     ORDER BY category.display_name, category.package_name""",
-                    (agent_id,),
+                    (scope,),
                 )
             ]
+        for item in result:
+            item["agent_id"] = agent_id
+        return result
 
     def rename_script_category(self, agent_id: str, package_name: str, display_name: str):
         now = utc_now()
+        scope = GLOBAL_SCRIPT_SCOPE
         with self.connect() as db:
-            self._ensure_script_category(db, agent_id, package_name)
+            self._ensure_script_category(db, scope, package_name)
             previous = db.execute(
                 "SELECT * FROM script_categories WHERE agent_id=? AND package_name=?",
-                (agent_id, package_name),
+                (scope, package_name),
             ).fetchone()
             db.execute(
                 """UPDATE script_categories SET display_name=?,updated_at=?
                 WHERE agent_id=? AND package_name=?""",
-                (display_name, now, agent_id, package_name),
+                (display_name, now, scope, package_name),
             )
             if previous["display_name"] != display_name:
                 self._insert_script_audit(
                     db,
-                    agent_id,
+                    scope,
                     "",
                     "category_renamed",
                     from_category=package_name,
@@ -1303,32 +1468,35 @@ class Store:
                 )
             row = db.execute(
                 "SELECT * FROM script_categories WHERE agent_id=? AND package_name=?",
-                (agent_id, package_name),
+                (scope, package_name),
             ).fetchone()
-        return dict(row)
+        result = dict(row)
+        result["agent_id"] = agent_id
+        return result
 
     def move_script_category(self, agent_id: str, name: str, category_package: str | None):
         category_package = category_package or None
         now = utc_now()
+        scope = GLOBAL_SCRIPT_SCOPE
         with self.connect() as db:
             previous = db.execute(
                 "SELECT * FROM scripts WHERE agent_id=? AND name=?",
-                (agent_id, name),
+                (scope, name),
             ).fetchone()
             if not previous:
                 return None
             if category_package:
-                self._ensure_script_category(db, agent_id, category_package)
+                self._ensure_script_category(db, scope, category_package)
             previous_category = previous["category_package"]
             if previous_category != category_package:
                 db.execute(
                     """UPDATE scripts SET category_package=?,updated_at=?
                     WHERE agent_id=? AND name=?""",
-                    (category_package, now, agent_id, name),
+                    (category_package, now, scope, name),
                 )
                 self._insert_script_audit(
                     db,
-                    agent_id,
+                    scope,
                     name,
                     "category_changed",
                     from_category=previous_category,
@@ -1343,23 +1511,26 @@ class Store:
                   ON script_categories.agent_id=scripts.agent_id
                  AND script_categories.package_name=scripts.category_package
                 WHERE scripts.agent_id=? AND scripts.name=?""",
-                (agent_id, name),
+                (scope, name),
             ).fetchone()
-        return dict(row)
+        result = dict(row)
+        result["agent_id"] = agent_id
+        return result
 
     def delete_script(self, agent_id: str, name: str):
         now = utc_now()
+        scope = GLOBAL_SCRIPT_SCOPE
         with self.connect() as db:
             previous = db.execute(
                 "SELECT * FROM scripts WHERE agent_id=? AND name=?",
-                (agent_id, name),
+                (scope, name),
             ).fetchone()
             if not previous:
                 return None
-            db.execute("DELETE FROM scripts WHERE agent_id=? AND name=?", (agent_id, name))
+            db.execute("DELETE FROM scripts WHERE agent_id=? AND name=?", (scope, name))
             self._insert_script_audit(
                 db,
-                agent_id,
+                scope,
                 name,
                 "deleted",
                 from_category=previous["category_package"],
@@ -1369,14 +1540,16 @@ class Store:
                 },
                 created_at=now,
             )
-        return dict(previous)
+        result = dict(previous)
+        result["agent_id"] = agent_id
+        return result
 
     def list_script_audit(self, agent_id: str, limit: int = 200):
         with self.connect() as db:
             rows = db.execute(
                 """SELECT * FROM script_audit_logs
-                WHERE agent_id=? ORDER BY id DESC LIMIT ?""",
-                (agent_id, limit),
+                WHERE agent_id IN (?,?) ORDER BY id DESC LIMIT ?""",
+                (GLOBAL_SCRIPT_SCOPE, agent_id, limit),
             ).fetchall()
         result = []
         for row in rows:

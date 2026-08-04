@@ -72,6 +72,9 @@ class ScriptManagementStoreTests(unittest.TestCase):
         self.assertEqual(categories[0]["display_name"], "com.RoamingStar.BlueArchive")
         self.assertEqual(categories[0]["script_count"], 1)
 
+        # Script records are shared by all agents after the legacy migration.
+        self.assertEqual(len(store.list_scripts("another-agent")), 1)
+
     def test_alias_move_delete_and_audit_history_are_persisted(self):
         store = Store(str(self.database_path))
         store.save_script(
@@ -102,6 +105,13 @@ class ScriptManagementStoreTests(unittest.TestCase):
             audit[1]["from_category"],
             "com.RoamingStar.BlueArchive",
         )
+
+    def test_scripts_are_shared_between_agents(self):
+        store = Store(str(self.database_path))
+        store.save_script("agent-1", "shared.json", self.script("com.example.game"), "com.example.game")
+
+        self.assertEqual(store.get_script("agent-2", "shared.json")["name"], "shared.json")
+        self.assertEqual(store.list_script_categories("agent-2")[0]["agent_id"], "agent-2")
 
 
 class ScriptManagementMetadataTests(unittest.TestCase):
