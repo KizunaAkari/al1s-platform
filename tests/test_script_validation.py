@@ -57,6 +57,41 @@ class ScriptValidationTests(unittest.TestCase):
 
         self.assertFalse(document["steps"][0]["post_assertion"]["enabled"])
 
+    def test_accepts_condition_skip_target_after_current_step(self):
+        document = validate_task_script(json.dumps({
+            "version": 2,
+            "steps": [
+                {"action": "home"},
+                {
+                    "action": "wait",
+                    "seconds": 1,
+                    "skip_condition": {
+                        "enabled": True,
+                        "skip_to_step_index": 3,
+                    },
+                },
+                {"action": "back"},
+            ],
+        }))
+
+        self.assertEqual(document["steps"][1]["skip_condition"]["skip_to_step_index"], 3)
+
+    def test_rejects_condition_skip_target_before_or_at_current_step(self):
+        with self.assertRaisesRegex(HTTPException, "后续已存在"):
+            validate_task_script(json.dumps({
+                "version": 2,
+                "steps": [
+                    {"action": "home"},
+                    {
+                        "action": "back",
+                        "skip_condition": {
+                            "enabled": True,
+                            "skip_to_step_index": 2,
+                        },
+                    },
+                ],
+            }))
+
     def test_accepts_failure_retry_on_the_target_step(self):
         document = validate_task_script(json.dumps({
             "version": 2,

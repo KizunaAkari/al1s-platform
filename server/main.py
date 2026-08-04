@@ -233,7 +233,7 @@ def script_type_of(document: dict) -> str:
     return value
 
 
-def validate_skip_condition(step: dict, position: int) -> None:
+def validate_skip_condition(step: dict, position: int, step_count: int) -> None:
     condition = step.get("skip_condition")
     if condition is None:
         return
@@ -246,9 +246,23 @@ def validate_skip_condition(step: dict, position: int) -> None:
         return
     if str(step.get("action") or "") == "start":
         raise HTTPException(status_code=422, detail="开始步骤不能配置条件跳过")
-    skip_remaining = condition.get("skip_remaining_steps", False)
-    if not isinstance(skip_remaining, bool):
-        raise HTTPException(status_code=422, detail=f"第 {position} 步的后续步骤跳过开关必须是布尔值")
+    raw_target = condition.get("skip_to_step_index")
+    if raw_target is None:
+        return
+    if isinstance(raw_target, bool):
+        raise HTTPException(status_code=422, detail=f"第 {position} 步的条件跳转目标必须是整数")
+    try:
+        target = int(raw_target)
+        numeric_target = float(raw_target)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise HTTPException(status_code=422, detail=f"第 {position} 步的条件跳转目标必须是整数") from exc
+    if not math.isfinite(numeric_target) or numeric_target != target:
+        raise HTTPException(status_code=422, detail=f"第 {position} 步的条件跳转目标必须是整数")
+    if target <= position or target > step_count:
+        raise HTTPException(
+            status_code=422,
+            detail=f"第 {position} 步的条件跳转目标必须是后续已存在的事件",
+        )
 
 
 def validate_post_assertion(step: dict, position: int) -> None:
@@ -418,7 +432,7 @@ def validate_task_script(content: str, allowed_types: set[str] | None = None) ->
     if len(actions) != len(steps):
         raise HTTPException(status_code=422, detail="脚本步骤必须全部是对象")
     for position, step in enumerate(steps, start=1):
-        validate_skip_condition(step, position)
+        validate_skip_condition(step, position, len(steps))
         validate_post_assertion(step, position)
     for position in range(len(steps)):
         validate_failure_retry(steps, position)
@@ -1070,7 +1084,11 @@ def deliver_conditional_skip_notification(job: dict):
     configuration = current_notification_configuration()
     skipped_steps = event.get("skipped_step_numbers") or []
     skipped_label = ", ".join(f"第 {int(item)} 步" for item in skipped_steps)
-    scope = "当前步骤及后续步骤" if event.get("scope") == "remaining" else "当前步骤"
+    if event.get("scope") == "until_step":
+        target_number = event.get("target_step_number")
+        scope = f"跳转到第 {int(target_number)} 步，跳过中间步骤" if target_number else "跳过中间步骤"
+    else:
+        scope = "当前步骤"
     condition = str(event.get("mode") or "numeric")
     if condition == "numeric":
         condition = f"OCR {event.get('operator') or ''} {event.get('value')}"
