@@ -168,6 +168,63 @@ class FailureStoreTests(unittest.TestCase):
             self.assertEqual(len(jobs), 1)
             self.assertTrue(Path(jobs[0]["path"]).is_file())
 
+    @unittest.skipIf(server_main is None, "FastAPI server dependencies are not installed in the host Python")
+    def test_conditional_skip_notification_is_prepared_and_persisted(self):
+        command = {
+            "id": "command-skip",
+            "agent_id": "agent-1",
+            "kind": "task",
+            "payload": {"name": "daily.json", "task_id": "task-1"},
+        }
+        result = {
+            "conditional_skips": [{
+                "trigger_step_index": 1,
+                "trigger_step_number": 2,
+                "trigger_action": "wait_click",
+                "mode": "numeric",
+                "operator": "gt",
+                "value": 10,
+                "scope": "remaining",
+                "skipped_step_indexes": [1, 2, 3],
+                "skipped_step_numbers": [2, 3, 4],
+            }],
+        }
+        configuration = SMTPConfiguration(
+            host="smtp.example.com",
+            port=587,
+            user="sender@example.com",
+            password="secret",
+            from_address="sender@example.com",
+            starttls=True,
+            ssl=False,
+            failure_recipients=("owner@example.com",),
+            failure_enabled=True,
+            public_base_url="http://127.0.0.1:8000",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            local_store = Store(str(Path(temporary) / "control-center.db"))
+            local_store.create_command(command)
+            with patch.object(server_main, "store", local_store), patch.object(
+                server_main,
+                "current_notification_configuration",
+                return_value=configuration,
+            ):
+                jobs = server_main.prepare_conditional_skip_notifications(command, result)
+
+            event = result["conditional_skips"][0]
+            self.assertEqual(event["email_status"], "pending")
+            self.assertEqual(len(jobs), 1)
+            local_store.complete_command(command["id"], result, True)
+            updated = local_store.update_conditional_skip_email(
+                command["id"],
+                event["id"],
+                "sent",
+                recipients=["owner@example.com"],
+            )
+            persisted = updated["result"]["conditional_skips"][0]
+            self.assertEqual(persisted["email_status"], "sent")
+            self.assertEqual(persisted["recipients"], ["owner@example.com"])
+
 
 class FailureEmailTests(unittest.TestCase):
     def test_failure_email_attaches_screenshot(self):

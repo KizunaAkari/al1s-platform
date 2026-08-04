@@ -233,6 +233,24 @@ def script_type_of(document: dict) -> str:
     return value
 
 
+def validate_skip_condition(step: dict, position: int) -> None:
+    condition = step.get("skip_condition")
+    if condition is None:
+        return
+    if not isinstance(condition, dict):
+        raise HTTPException(status_code=422, detail=f"第 {position} 步的条件跳过必须是对象")
+    enabled = condition.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=422, detail=f"第 {position} 步的条件跳过 enabled 必须是布尔值")
+    if not enabled:
+        return
+    if str(step.get("action") or "") == "start":
+        raise HTTPException(status_code=422, detail="开始步骤不能配置条件跳过")
+    skip_remaining = condition.get("skip_remaining_steps", False)
+    if not isinstance(skip_remaining, bool):
+        raise HTTPException(status_code=422, detail=f"第 {position} 步的后续步骤跳过开关必须是布尔值")
+
+
 def validate_post_assertion(step: dict, position: int) -> None:
     assertion = step.get("post_assertion")
     if assertion is None:
@@ -400,6 +418,7 @@ def validate_task_script(content: str, allowed_types: set[str] | None = None) ->
     if len(actions) != len(steps):
         raise HTTPException(status_code=422, detail="脚本步骤必须全部是对象")
     for position, step in enumerate(steps, start=1):
+        validate_skip_condition(step, position)
         validate_post_assertion(step, position)
     for position in range(len(steps)):
         validate_failure_retry(steps, position)
@@ -1019,6 +1038,79 @@ def deliver_success_feedback(job: dict):
             pass
 
 
+def prepare_conditional_skip_notifications(command_item: dict, result_payload: dict) -> list[dict]:
+    events = result_payload.get("conditional_skips")
+    if not isinstance(events, list):
+        return []
+    configuration = current_notification_configuration()
+    mail_available = failure_notifications_configured(configuration)
+    script_name = str((command_item.get("payload") or {}).get("name") or "未命名脚本")
+    jobs: list[dict] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        notification_id = str(uuid.uuid4())
+        event["id"] = notification_id
+        event["email_status"] = "pending" if mail_available else "disabled"
+        event["email_error"] = None if mail_available else "通知设置未启用 SMTP 或收件人"
+        event["recipients"] = []
+        if mail_available:
+            jobs.append({
+                "command_id": command_item["id"],
+                "notification_id": notification_id,
+                "agent_id": command_item["agent_id"],
+                "script_name": script_name,
+                "event": dict(event),
+            })
+    return jobs
+
+
+def deliver_conditional_skip_notification(job: dict):
+    event = job["event"]
+    configuration = current_notification_configuration()
+    skipped_steps = event.get("skipped_step_numbers") or []
+    skipped_label = ", ".join(f"第 {int(item)} 步" for item in skipped_steps)
+    scope = "当前步骤及后续步骤" if event.get("scope") == "remaining" else "当前步骤"
+    condition = str(event.get("mode") or "numeric")
+    if condition == "numeric":
+        condition = f"OCR {event.get('operator') or ''} {event.get('value')}"
+    else:
+        condition = f"图片匹配阈值 {event.get('threshold', 0.85)}"
+    body = "\n".join([
+        "MAA 自动化脚本触发了条件跳过。",
+        "",
+        f"脚本：{job['script_name']}",
+        f"终端：{job['agent_id']}",
+        f"触发步骤：第 {int(event.get('trigger_step_number', 0))} 步（{event.get('trigger_action') or '未知事件'}）",
+        f"条件：{condition}",
+        f"跳过范围：{scope}",
+        f"被跳过步骤：{skipped_label or '当前步骤'}",
+        f"发生时间：{utc_now()}",
+    ])
+    try:
+        recipients = send_message(
+            configuration.failure_recipients,
+            f"[MAA] 脚本条件跳过：{job['script_name']}",
+            body,
+            configuration=configuration,
+        )
+        store.update_conditional_skip_email(
+            job["command_id"],
+            job["notification_id"],
+            "sent",
+            recipients=recipients,
+        )
+        store.add_log(job["agent_id"], "INFO", f"条件跳过通知邮件已发送至 {', '.join(recipients)}")
+    except Exception as exc:
+        store.update_conditional_skip_email(
+            job["command_id"],
+            job["notification_id"],
+            "failed",
+            str(exc),
+        )
+        store.add_log(job["agent_id"], "ERROR", f"条件跳过通知邮件发送失败：{exc}")
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True, "service": settings.app_name, "version": app.version}
@@ -1578,8 +1670,10 @@ def command_result(command_id: str, payload: CommandResult, background_tasks: Ba
             success = False
             result_payload = {"error": str(exc)}
     feedback_jobs = []
+    conditional_skip_jobs = []
     if command_item and command_item["kind"] in {"task", "run_script", "run_step"} and success:
         feedback_jobs = prepare_success_feedbacks(command_item, result_payload)
+        conditional_skip_jobs = prepare_conditional_skip_notifications(command_item, result_payload)
     failure_record = None
     if command_item and command_item["kind"] in {"task", "run_script"} and not success:
         failure_record = create_failure_record(command_item, result_payload)
@@ -1626,6 +1720,8 @@ def command_result(command_id: str, payload: CommandResult, background_tasks: Ba
         background_tasks.add_task(deliver_failure_email, failure_record["id"])
     for feedback_job in feedback_jobs:
         background_tasks.add_task(deliver_success_feedback, feedback_job)
+    for skip_job in conditional_skip_jobs:
+        background_tasks.add_task(deliver_conditional_skip_notification, skip_job)
     if retry_task:
         result["retry_task"] = public_task(retry_task)
     return result

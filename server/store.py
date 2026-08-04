@@ -990,6 +990,47 @@ class Store:
             self._command_condition.notify_all()
         return self.get_command(command_id)
 
+    def update_conditional_skip_email(
+        self,
+        command_id: str,
+        notification_id: str,
+        status: str,
+        error: str | None = None,
+        recipients: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        with self._command_condition:
+            with self.connect() as db:
+                row = db.execute("SELECT * FROM commands WHERE id=?", (command_id,)).fetchone()
+                if row is None:
+                    return None
+                try:
+                    result = json.loads(row["result"])
+                except (TypeError, json.JSONDecodeError):
+                    result = {}
+                updated = False
+                for event in result.get("conditional_skips", []):
+                    if not isinstance(event, dict) or event.get("id") != notification_id:
+                        continue
+                    event["email_status"] = status
+                    event["email_error"] = error
+                    if recipients is not None:
+                        event["recipients"] = recipients
+                    updated = True
+                    break
+                if not updated:
+                    return self.decode(row)
+                encoded = json.dumps(result)
+                db.execute("UPDATE commands SET result=? WHERE id=?", (encoded, command_id))
+                try:
+                    payload = json.loads(row["payload"])
+                except (TypeError, json.JSONDecodeError):
+                    payload = {}
+                task_id = payload.get("task_id")
+                if task_id:
+                    db.execute("UPDATE tasks SET result=? WHERE id=?", (encoded, task_id))
+            self._command_condition.notify_all()
+        return self.get_command(command_id)
+
     def get_command(self, command_id: str):
         with self.connect() as db:
             return self.decode(db.execute("SELECT * FROM commands WHERE id=?", (command_id,)).fetchone())
