@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh AL-1S platform DHCP firewall address
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=60
+Unit=al1s-host-manager-firewall.service
+
+[Install]
+WantedBy=timers.target

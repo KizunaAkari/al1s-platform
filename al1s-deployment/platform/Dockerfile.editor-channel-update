@@ -1,0 +1,6 @@
+# Narrow hotfix on the running release; do not deploy pending schema/backend work.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY --chown=al1s:al1s al1s/api/editor_sessions.py al1s/api/editor_channels.py /app/al1s/api/
+COPY --chown=al1s:al1s al1s/execution/editor_service.py /app/al1s/execution/
+COPY --from=frontend --chown=al1s:al1s . /app/frontend/

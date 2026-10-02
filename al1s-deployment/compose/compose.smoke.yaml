@@ -1,0 +1,48 @@
+# Isolated development smoke environment. Set a unique AL1S_SMOKE_ID for each run.
+name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}
+services:
+  postgres:
+    container_name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-postgres
+  seaweed-master:
+    container_name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-seaweed-master
+  seaweed-volume:
+    container_name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-seaweed-volume
+  seaweed-filer:
+    container_name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-seaweed-filer
+  seaweed-s3:
+    container_name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-seaweed-s3
+  mosquitto:
+    container_name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-mosquitto
+  backend:
+    container_name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-app
+    image: ${AL1S_SMOKE_IMAGE:-al1s-platform:dev-20260914}
+  migrate:
+    container_name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-migrate
+    image: ${AL1S_SMOKE_IMAGE:-al1s-platform:dev-20260914}
+  s3-init:
+    container_name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-storage-init
+    image: ${AL1S_SMOKE_IMAGE:-al1s-platform:dev-20260914}
+  execution-test-db-init:
+    container_name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-execution-test-db-init
+  execution-test:
+    container_name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-execution-test
+networks:
+  control:
+    external: false
+    name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-control
+volumes:
+  al1s-next-postgres:
+    external: false
+    name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-postgres
+  al1s-next-seaweed-master:
+    external: false
+    name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-seaweed-master
+  al1s-next-seaweed-volume:
+    external: false
+    name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-seaweed-volume
+  al1s-next-seaweed-filer:
+    external: false
+    name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-seaweed-filer
+  al1s-next-mosquitto:
+    external: false
+    name: al1s-smoke-${AL1S_SMOKE_ID:?set a unique smoke identifier}-mosquitto

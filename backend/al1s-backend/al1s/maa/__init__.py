@@ -1,0 +1,1 @@
+"""Maa automation module boundary."""

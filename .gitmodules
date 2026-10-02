@@ -1,3 +1,6 @@
-[submodule "frontend"]
-	path = frontend
+[submodule "al1s-frontend"]
+	path = al1s-frontend
 	url = https://github.com/KizunaAkari/al1s-frontend.git
+[submodule "terminals"]
+	path = terminals
+	url = https://github.com/KizunaAkari/al1s-terminal.git

@@ -1,0 +1,4 @@
+# Frontend-only update on an already verified backend; no dependency/schema changes.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY --chown=al1s:al1s . /app/frontend/

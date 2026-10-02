@@ -1,0 +1,8 @@
+# Keep the running 0048 schema and established platform image; update channel API and UI only.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY --from=backend --chown=al1s:al1s notifications/ports.py /app/al1s/notifications/ports.py
+COPY --from=backend --chown=al1s:al1s notifications/service.py /app/al1s/notifications/service.py
+COPY --from=backend --chown=al1s:al1s api/notifications.py /app/al1s/api/notifications.py
+COPY --from=backend --chown=al1s:al1s adapters/postgres/notification_repositories.py /app/al1s/adapters/postgres/notification_repositories.py
+COPY --from=frontend --chown=al1s:al1s . /app/frontend/

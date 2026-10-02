@@ -1,0 +1,8 @@
+# Additive catalog count response and Maa library UI on the verified running image.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY --chown=al1s:al1s backend/al1s-backend/al1s/maa/ports.py /app/al1s/maa/ports.py
+COPY --chown=al1s:al1s backend/al1s-backend/al1s/maa/catalog_service.py /app/al1s/maa/catalog_service.py
+COPY --chown=al1s:al1s backend/al1s-backend/al1s/adapters/postgres/maa_repositories.py /app/al1s/adapters/postgres/maa_repositories.py
+COPY --chown=al1s:al1s backend/al1s-backend/al1s/api/maa_catalog.py /app/al1s/api/maa_catalog.py
+COPY --chown=al1s:al1s al1s-frontend/dist/ /app/frontend/

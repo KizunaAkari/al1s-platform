@@ -1,0 +1,86 @@
+name: al1s-bot
+
+x-retained-syslog: &retained-syslog
+  driver: syslog
+  options:
+    syslog-address: udp://host.docker.internal:15144
+    syslog-format: rfc5424micro
+    tag: "al1s/{{.Name}}"
+    cache-disabled: "true"
+
+services:
+  llbot:
+    image: linyuchen/llbot:${LLBOT_VERSION:-latest}
+    container_name: al1s-llbot
+    logging: *retained-syslog
+    restart: unless-stopped
+    init: true
+    environment:
+      TZ: Asia/Shanghai
+      WEBUI_PORT: 3080
+      HTTP_PROXY: ${AL1S_BOT_HTTP_PROXY:-}
+      HTTPS_PROXY: ${AL1S_BOT_HTTP_PROXY:-}
+      NODE_USE_ENV_PROXY: "1"
+      NO_PROXY: ${AL1S_BOT_NO_PROXY:-localhost,127.0.0.1,backend,al1s-platform-app,al1s-llbot}
+    volumes:
+      - ./llbot-data:/app/llbot/data:rw
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - bot-network
+      - control-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - node -e "fetch('http://127.0.0.1:'+(process.env.WEBUI_PORT||3080)).then(()=>process.exit(0),()=>process.exit(1))"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  discord-worker:
+    build:
+      context: ../../backend/al1s-bot
+      dockerfile: Dockerfile
+    image: ${AL1S_DISCORD_WORKER_IMAGE:-al1s-plachta:local}
+    container_name: al1s-discord-worker
+    logging: *retained-syslog
+    restart: unless-stopped
+    init: true
+    environment:
+      TZ: Asia/Shanghai
+      AL1S_CONTROL_BASE_URL: ${AL1S_CONTROL_BASE_URL:-http://backend:8000}
+      AL1S_BOT_STATE_DIR: /var/lib/al1s-plachta
+      AL1S_BOT_CREDENTIAL_PATH: /var/lib/al1s-plachta/credential
+      AL1S_BOT_REGISTRATION_CODE_PATH: /var/lib/al1s-plachta/registration-code
+      HEALTH_HOST: 0.0.0.0
+      HEALTH_PORT: 3100
+      AL1S_BOT_HTTP_PROXY: ${AL1S_BOT_HTTP_PROXY:-}
+      AL1S_BOT_NO_PROXY: ${AL1S_BOT_NO_PROXY:-localhost,127.0.0.1,backend,al1s-platform-app,al1s-llbot}
+    volumes:
+      - discord-worker-state:/var/lib/al1s-plachta
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - bot-network
+      - control-network
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 20s
+
+networks:
+  bot-network:
+    name: al1s-bot-network
+    driver: bridge
+  control-network:
+    external: true
+    name: ${AL1S_CONTROL_NETWORK:-al1s-platform-smoke-control}
+
+volumes:
+  discord-worker-state:
+    name: al1s-next-discord-worker-state

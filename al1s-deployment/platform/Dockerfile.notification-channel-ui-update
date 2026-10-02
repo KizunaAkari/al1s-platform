@@ -1,0 +1,4 @@
+# Update notification settings UI on the verified notification-channel backend release.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY --from=frontend --chown=al1s:al1s . /app/frontend/

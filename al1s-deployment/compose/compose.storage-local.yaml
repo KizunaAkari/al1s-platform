@@ -1,0 +1,24 @@
+# Optional host-backed object storage. Create these directories before starting.
+# Do not apply to an existing store without an explicit data move plan.
+services:
+  seaweed-master:
+    volumes:
+      - type: bind
+        source: ${AL1S_STORAGE_DIRECTORY:?Set AL1S_STORAGE_DIRECTORY}/master
+        target: /data
+        bind:
+          create_host_path: false
+  seaweed-volume:
+    volumes:
+      - type: bind
+        source: ${AL1S_STORAGE_DIRECTORY:?Set AL1S_STORAGE_DIRECTORY}/volume
+        target: /data
+        bind:
+          create_host_path: false
+  seaweed-filer:
+    volumes:
+      - type: bind
+        source: ${AL1S_STORAGE_DIRECTORY:?Set AL1S_STORAGE_DIRECTORY}/filer
+        target: /data
+        bind:
+          create_host_path: false

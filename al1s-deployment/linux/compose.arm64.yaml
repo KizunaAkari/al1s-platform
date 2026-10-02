@@ -1,0 +1,57 @@
+services:
+  terminal-agent:
+    container_name: al1s-terminal-linux
+    image: ${AL1S_TERMINAL_IMAGE:?set the verified terminal candidate image}
+    build:
+      context: ../../terminals/al1s-terminal-linux
+      dockerfile: Dockerfile.arm64
+      platforms:
+        - linux/arm64
+    env_file:
+      - ${AL1S_TERMINAL_ENV_FILE:-./terminal.arm64.env}
+    environment:
+      AL1S_TERMINAL_DATA_DIR: /data
+      AL1S_TERMINAL_ADB_PATH: /usr/bin/adb
+      AL1S_TERMINAL_MAA_OCR_MODEL_DIR: /opt/al1s-assets/ocr
+      AL1S_TERMINAL_MAA_YOLO_PROVIDER: al1s_terminal.providers.rknn_yolo:RknnYoloProvider
+      AL1S_TERMINAL_RKNN_MODEL: /models/yolov8n_640x640_rk3576.rknn
+      AL1S_TERMINAL_RKNN_RUNTIME_VERSION: 2.3.2
+      AL1S_TERMINAL_TLS_CA_FILE: /certs/platform-ca.crt
+      AL1S_TERMINAL_SCRCPY_RELAY_HOST: 0.0.0.0
+    privileged: true
+    init: true
+    network_mode: host
+    restart: unless-stopped
+    logging:
+      driver: syslog
+      options:
+        syslog-address: udp://127.0.0.1:15144
+        syslog-format: rfc5424micro
+        tag: al1s-terminal-linux
+        cache-disabled: "true"
+    stop_grace_period: 390s
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+      - type: bind
+        source: ${AL1S_TERMINAL_DATA_DIR_HOST:?set verified persistent data directory}
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AL1S_TERMINAL_ADB_HOME_HOST:?set verified ADB identity directory}
+        target: /root/.android
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AL1S_TERMINAL_MODEL_DIR_HOST:?set verified model directory}
+        target: /models
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AL1S_TERMINAL_CERT_DIR_HOST:?set verified certificate directory}
+        target: /certs
+        read_only: true
+        bind:
+          create_host_path: false
+      - /run/avahi-daemon/socket:/run/avahi-daemon/socket:ro

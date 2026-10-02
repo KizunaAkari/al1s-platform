@@ -1,0 +1,11 @@
+[Unit]
+Description=Restrict AL-1S maintenance to platform IPv4 address
+After=network-online.target
+Wants=network-online.target
+Before=al1s-host-manager.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/al1s/host-manager.env
+ExecStart=/usr/bin/bash /opt/al1s-host-manager/host-manager-firewall.sh
+
