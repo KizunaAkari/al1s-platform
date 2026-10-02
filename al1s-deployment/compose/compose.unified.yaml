@@ -1,0 +1,256 @@
+# Candidate replacement for compose.yaml; do not merge both base files.
+name: al1s-next
+
+services:
+  postgres:
+    image: m.daocloud.io/docker.io/library/postgres:17.11-alpine3.24@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+    environment:
+      POSTGRES_DB: ${AL1S_POSTGRES_DATABASE}
+      POSTGRES_USER: ${AL1S_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${AL1S_POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - al1s-next-postgres:/var/lib/postgresql/data
+    networks: [control]
+    restart: unless-stopped
+
+  seaweed-master:
+    image: m.daocloud.io/docker.io/chrislusf/seaweedfs:4.43@sha256:7bea581f48155c069d3c725e60c386c88210c67cde8bce412344ff6ebea264da
+    command: "master -ip=seaweed-master -mdir=/data"
+    volumes:
+      - al1s-next-seaweed-master:/data
+    networks: [control]
+    restart: unless-stopped
+
+  seaweed-volume:
+    image: m.daocloud.io/docker.io/chrislusf/seaweedfs:4.43@sha256:7bea581f48155c069d3c725e60c386c88210c67cde8bce412344ff6ebea264da
+    command: "volume -mserver=seaweed-master:9333 -ip=seaweed-volume -port=8080 -dir=/data"
+    depends_on:
+      seaweed-master:
+        condition: service_started
+    volumes:
+      - al1s-next-seaweed-volume:/data
+    networks: [control]
+    restart: unless-stopped
+
+  seaweed-filer:
+    image: m.daocloud.io/docker.io/chrislusf/seaweedfs:4.43@sha256:7bea581f48155c069d3c725e60c386c88210c67cde8bce412344ff6ebea264da
+    command: "filer -master=seaweed-master:9333"
+    depends_on:
+      seaweed-master:
+        condition: service_started
+      seaweed-volume:
+        condition: service_started
+    volumes:
+      - al1s-next-seaweed-filer:/data
+    networks: [control]
+    restart: unless-stopped
+
+  seaweed-s3:
+    image: m.daocloud.io/docker.io/chrislusf/seaweedfs:4.43@sha256:7bea581f48155c069d3c725e60c386c88210c67cde8bce412344ff6ebea264da
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        cat > /tmp/s3.json <<EOF
+        {"identities":[{"name":"al1s-platform","credentials":[{"accessKey":"$${S3_ACCESS_KEY}","secretKey":"$${S3_SECRET_KEY}"}],"actions":["Admin","Read","Write"]}]}
+        EOF
+        exec weed s3 -filer=seaweed-filer:8888 -port=8333 -config=/tmp/s3.json
+    environment:
+      S3_ACCESS_KEY: ${AL1S_S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${AL1S_S3_SECRET_KEY}
+    depends_on:
+      seaweed-filer:
+        condition: service_started
+    networks: [control]
+    restart: unless-stopped
+
+  mosquitto:
+    image: m.daocloud.io/docker.io/library/eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ ! -s /mosquitto/data/dynamic-security.json ]; then
+          chown mosquitto:mosquitto /mosquitto/data
+          mosquitto_ctrl dynsec init /mosquitto/data/dynamic-security.json "$${MQTT_USERNAME}" "$${MQTT_PASSWORD}"
+          chown mosquitto:mosquitto /mosquitto/data/dynamic-security.json
+          chmod 0600 /mosquitto/data/dynamic-security.json
+        fi
+        cp /mosquitto/config/mosquitto.conf /tmp/mosquitto.conf
+        if [ "$${MQTT_PUBLIC_TLS_ENABLED}" = "true" ]; then
+          test -s /mosquitto/certs/ca.crt
+          test -s /mosquitto/certs/server.crt
+          test -s /mosquitto/certs/server.key
+          cat >> /tmp/mosquitto.conf <<'EOF'
+        listener 8883
+        cafile /mosquitto/certs/ca.crt
+        certfile /mosquitto/certs/server.crt
+        keyfile /mosquitto/certs/server.key
+        tls_version tlsv1.2
+        EOF
+        fi
+        exec /usr/sbin/mosquitto -c /tmp/mosquitto.conf
+    environment:
+      MQTT_USERNAME: ${AL1S_MQTT_USERNAME}
+      MQTT_PASSWORD: ${AL1S_MQTT_PASSWORD}
+      MQTT_PUBLIC_TLS_ENABLED: ${AL1S_MQTT_PUBLIC_TLS_ENABLED:-false}
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h 127.0.0.1 -u $$MQTT_USERNAME -P $$MQTT_PASSWORD -t al1s/health/probe -m ready -q 0"]
+      interval: 5s
+      timeout: 4s
+      retries: 12
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - al1s-next-mosquitto:/mosquitto/data
+    ports:
+      - "${AL1S_MQTT_BIND_ADDRESS:-127.0.0.1}:${AL1S_MQTT_LOCAL_PORT:-1883}:1883"
+    networks: [control]
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ../../backend/al1s-backend
+      target: runtime
+    command: ["alembic", "upgrade", "head"]
+    environment: &backend-environment
+      AL1S_ENVIRONMENT: production
+      AL1S_ADMIN_PASSWORD: ${AL1S_ADMIN_PASSWORD:-}
+      AL1S_ADMIN_COOKIE_SECURE: ${AL1S_ADMIN_COOKIE_SECURE:-true}
+      AL1S_PLATFORM_PUBLIC_URL: ${AL1S_PLATFORM_PUBLIC_URL:-}
+      AL1S_LLBOT_WEBUI_URL: ${AL1S_LLBOT_WEBUI_URL:-}
+      AL1S_BOT_CONTROL_URL: ${AL1S_BOT_CONTROL_URL:-}
+      AL1S_BOT_CONTROL_TOKEN: ${AL1S_BOT_CONTROL_TOKEN:-}
+      AL1S_HOST_MANAGERS: ${AL1S_HOST_MANAGERS:-{}}
+      AL1S_TERMINAL_HEARTBEAT_TIMEOUT_SECONDS: ${AL1S_TERMINAL_HEARTBEAT_TIMEOUT_SECONDS:-90}
+      AL1S_DATABASE_URL: postgresql+psycopg://${AL1S_POSTGRES_USER}:${AL1S_POSTGRES_PASSWORD}@postgres:5432/${AL1S_POSTGRES_DATABASE}
+      AL1S_S3_ENDPOINT_URL: http://seaweed-s3:8333
+      AL1S_S3_PUBLIC_ENDPOINT_URL: ${AL1S_S3_PUBLIC_ENDPOINT_URL:-http://seaweed-s3:8333}
+      AL1S_S3_BUCKET: ${AL1S_S3_BUCKET}
+      AL1S_S3_ACCESS_KEY: ${AL1S_S3_ACCESS_KEY}
+      AL1S_S3_SECRET_KEY: ${AL1S_S3_SECRET_KEY}
+      AL1S_NOTIFICATION_MASTER_KEY: ${AL1S_NOTIFICATION_MASTER_KEY}
+      AL1S_OFFLINE_PERMIT_SIGNING_KEY: ${AL1S_OFFLINE_PERMIT_SIGNING_KEY:?generate a private offline permit signing key}
+      AL1S_MQTT_HOST: mosquitto
+      AL1S_MQTT_PORT: 1883
+      AL1S_MQTT_PUBLIC_HOST: ${AL1S_MQTT_PUBLIC_HOST:-127.0.0.1}
+      AL1S_MQTT_PUBLIC_PORT: ${AL1S_MQTT_PUBLIC_PORT:-1883}
+      AL1S_MQTT_TLS_ENABLED: ${AL1S_MQTT_TLS_ENABLED:-false}
+      AL1S_MQTT_PUBLIC_TLS_ENABLED: ${AL1S_MQTT_PUBLIC_TLS_ENABLED:-false}
+      AL1S_MQTT_USERNAME: ${AL1S_MQTT_USERNAME}
+      AL1S_MQTT_PASSWORD: ${AL1S_MQTT_PASSWORD}
+      AL1S_MQTT_PUBLISHER_USERNAME: ${AL1S_MQTT_PUBLISHER_USERNAME}
+      AL1S_MQTT_PUBLISHER_PASSWORD: ${AL1S_MQTT_PUBLISHER_PASSWORD}
+      AL1S_MQTT_SESSION_SIGNING_KEY: ${AL1S_MQTT_SESSION_SIGNING_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [control]
+    restart: "no"
+
+  s3-init:
+    build:
+      context: ../../backend/al1s-backend
+      target: runtime
+    command: ["python", "-m", "al1s.infrastructure.s3_bootstrap"]
+    environment: *backend-environment
+    depends_on:
+      seaweed-s3:
+        condition: service_started
+    networks: [control]
+    restart: "no"
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: al1s-deployment/platform/Dockerfile
+      target: runtime
+    environment: *backend-environment
+    stop_grace_period: 390s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      s3-init:
+        condition: service_completed_successfully
+      mosquitto:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "127.0.0.1:${AL1S_FRONTEND_PORT}:8000"
+    networks: [control]
+    restart: unless-stopped
+
+  execution-test-db-init:
+    profiles: [test]
+    image: m.daocloud.io/docker.io/library/postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
+    environment:
+      PGHOST: postgres
+      PGUSER: ${AL1S_POSTGRES_USER}
+      PGPASSWORD: ${AL1S_POSTGRES_PASSWORD}
+      PGDATABASE: postgres
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'al1s_execution_test'" |
+          grep -qx 1 || createdb al1s_execution_test
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [control]
+    restart: "no"
+
+  execution-test:
+    profiles: [test]
+    build:
+      context: ../../backend/al1s-backend
+      target: test
+    environment:
+      <<: *backend-environment
+      AL1S_TEST_S3: "1"
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        test_database_url="$${AL1S_DATABASE_URL%/*}/al1s_execution_test"
+        export AL1S_DATABASE_URL="$$test_database_url"
+        export AL1S_TEST_DATABASE_URL="$$test_database_url"
+        alembic upgrade head
+        alembic downgrade base
+        alembic upgrade head
+        alembic upgrade head
+        alembic check
+        python -m ruff check .
+        python -m mypy al1s
+        python -m pytest
+    depends_on:
+      execution-test-db-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      s3-init:
+        condition: service_completed_successfully
+    networks: [control]
+    restart: "no"
+
+networks:
+  control:
+    name: al1s-next-control
+
+volumes:
+  al1s-next-postgres:
+    name: al1s-next-postgres
+  al1s-next-seaweed-master:
+    name: al1s-next-seaweed-master
+  al1s-next-seaweed-volume:
+    name: al1s-next-seaweed-volume
+  al1s-next-seaweed-filer:
+    name: al1s-next-seaweed-filer
+  al1s-next-mosquitto:
+    name: al1s-next-mosquitto

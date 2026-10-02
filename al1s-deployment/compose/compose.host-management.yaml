@@ -1,0 +1,10 @@
+# Optional overlay for compose.unified.yaml. Public CA certificates only, no private keys.
+services:
+  backend:
+    volumes:
+      - type: bind
+        source: ${AL1S_HOST_MANAGER_CA_DIR:?Set an existing directory containing trusted host CA certificates}
+        target: /run/al1s/host-manager-ca
+        read_only: true
+        bind:
+          create_host_path: false

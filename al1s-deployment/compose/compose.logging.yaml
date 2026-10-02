@@ -1,0 +1,65 @@
+x-retained-syslog: &retained-syslog
+  driver: syslog
+  options:
+    syslog-address: udp://host.docker.internal:15144
+    syslog-format: rfc5424micro
+    tag: "al1s/{{.Name}}"
+    cache-disabled: "true"
+
+services:
+  log-collector:
+    container_name: al1s-platform-log-collector
+    image: ${AL1S_PLATFORM_IMAGE:?set verified platform image}
+    user: "0:0"
+    command: ["python", "-u", "/opt/al1s/logging/retained_syslog.py"]
+    environment:
+      AL1S_LOG_DIRECTORY: /var/lib/al1s-logs
+      AL1S_SYSLOG_PORT: "15144"
+    volumes:
+      - ../logging/retained_syslog.py:/opt/al1s/logging/retained_syslog.py:ro
+      - al1s-retained-logs:/var/lib/al1s-logs
+    ports:
+      - "127.0.0.1:15144:15144/udp"
+    networks: [log-ingest]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+    logging:
+      driver: none
+
+  postgres:
+    logging: *retained-syslog
+  seaweed-master:
+    logging: *retained-syslog
+  seaweed-volume:
+    logging: *retained-syslog
+  seaweed-filer:
+    logging: *retained-syslog
+  seaweed-s3:
+    logging: *retained-syslog
+  mosquitto:
+    logging: *retained-syslog
+  migrate:
+    logging: *retained-syslog
+  s3-init:
+    logging: *retained-syslog
+  backend:
+    logging: *retained-syslog
+  tls-gateway:
+    logging: *retained-syslog
+  execution-test-db-init:
+    logging: *retained-syslog
+  execution-test:
+    logging: *retained-syslog
+
+networks:
+  log-ingest:
+    name: al1s-platform-log-ingest
+    driver: bridge
+
+volumes:
+  al1s-retained-logs:
+    name: al1s-platform-retained-logs

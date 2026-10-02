@@ -1,0 +1,91 @@
+# Stable operator-facing names for the existing acceptance platform.
+# Keep storage/network identities: renaming containers must never create empty data.
+name: al1s-platform
+services:
+  bot-control:
+    # The platform owns the service lifecycle; only this helper receives Docker authority.
+    container_name: al1s-platform-bot-control
+    image: ${AL1S_BOT_CONTROL_IMAGE:-al1s-bot-control:20260925-r1}
+    build:
+      context: ../../backend/al1s-backend
+      target: runtime
+    command: ["uvicorn", "al1s.bots.control_proxy:from_environment", "--factory",
+              "--host", "0.0.0.0", "--port", "8011", "--workers", "1", "--no-access-log"]
+    environment:
+      AL1S_BOT_CONTROL_TOKEN: ${AL1S_BOT_CONTROL_TOKEN:?configure a separate 32-character secret}
+      AL1S_CONTROL_QQ_CONTAINER: ${AL1S_CONTROL_QQ_CONTAINER:-}
+      AL1S_CONTROL_DISCORD_CONTAINER: ${AL1S_CONTROL_DISCORD_CONTAINER:-}
+      AL1S_CONTROL_DOCKER_VERSION: ${AL1S_CONTROL_DOCKER_VERSION:-1.45}
+    # Docker socket access is host-wide; keep it out of the backend service.
+    group_add: ["${AL1S_DOCKER_SOCKET_GID:?set the host Docker socket group}"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    networks: [control]
+    restart: unless-stopped
+    logging:
+      driver: syslog
+      options:
+        syslog-address: udp://host.docker.internal:15144
+        syslog-format: rfc5424micro
+        tag: "al1s/{{.Name}}"
+        cache-disabled: "true"
+
+  backend:
+    container_name: al1s-platform-app
+    image: ${AL1S_PLATFORM_IMAGE:?set verified platform image}
+    environment:
+      # Explicit browser origins behind TLS; never trust arbitrary forwarded origins.
+      AL1S_CORS_ORIGINS: ${AL1S_BROWSER_ORIGINS:-https://yukari.local:8443,https://127.0.0.1:8443,https://localhost:8443}
+      AL1S_EDITOR_RELAY_ORIGINS: ${AL1S_EDITOR_RELAY_ORIGINS:-}
+      AL1S_EDITOR_RELAY_CA_FILE: /run/al1s/editor-relay-ca.crt
+    volumes:
+      - ./tls/generated/ca.crt:/run/al1s/editor-relay-ca.crt:ro
+  migrate:
+    container_name: al1s-platform-migrate
+    image: ${AL1S_PLATFORM_IMAGE:?set verified platform image}
+  s3-init:
+    container_name: al1s-platform-storage-init
+    image: ${AL1S_PLATFORM_IMAGE:?set verified platform image}
+  postgres:
+    container_name: al1s-platform-db
+  mosquitto:
+    container_name: al1s-platform-mqtt
+  tls-gateway:
+    container_name: al1s-platform-gateway
+    ports:
+      - "127.0.0.1:8444:8444"
+    volumes:
+      # Same CA/key as existing deployment; DNS plus loopback SAN for local browsers.
+      - ./tls/generated/server-local.crt:/etc/al1s/tls/server.crt:ro
+  seaweed-master:
+    container_name: al1s-platform-storage-master
+  seaweed-volume:
+    container_name: al1s-platform-storage-volume
+  seaweed-filer:
+    container_name: al1s-platform-storage-filer
+  seaweed-s3:
+    container_name: al1s-platform-storage-s3
+networks:
+  control:
+    external: true
+    name: al1s-platform-smoke-control
+volumes:
+  al1s-next-postgres:
+    external: true
+    name: al1s-platform-smoke-postgres
+  al1s-next-seaweed-master:
+    external: true
+    name: al1s-platform-smoke-seaweed-master
+  al1s-next-seaweed-volume:
+    external: true
+    name: al1s-platform-smoke-seaweed-volume
+  al1s-next-seaweed-filer:
+    external: true
+    name: al1s-platform-smoke-seaweed-filer
+  al1s-next-mosquitto:
+    external: true
+    name: al1s-platform-smoke-mosquitto

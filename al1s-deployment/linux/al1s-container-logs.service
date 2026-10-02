@@ -1,0 +1,24 @@
+[Unit]
+Description=AL-1S seven-day container log collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+UMask=0077
+Environment=AL1S_LOG_DIRECTORY=/run/media/mmcblk1p8/al1s/logs
+Environment=AL1S_SYSLOG_BIND=127.0.0.1
+Environment=AL1S_SYSLOG_PORT=15144
+ExecStart=/usr/local/bin/python3.12 /run/media/mmcblk1p8/al1s/deployment/logging/retained_syslog.py
+Restart=on-failure
+RestartSec=5
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/run/media/mmcblk1p8/al1s/logs
+RestrictAddressFamilies=AF_INET
+
+[Install]
+WantedBy=multi-user.target

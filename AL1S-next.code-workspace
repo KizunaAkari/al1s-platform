@@ -1,0 +1,38 @@
+{
+    "folders":  [
+                    {
+                        "name":  "Documentation",
+                        "path":  "docs"
+                    },
+                    {
+                        "name":  "al1s-frontend",
+                        "path":  "al1s-frontend"
+                    },
+                    {
+                        "name":  "al1s-backend",
+                        "path":  "backend/al1s-backend"
+                    },
+                    {
+                        "name":  "al1s-bot",
+                        "path":  "backend/al1s-bot"
+                    },
+                    {
+                        "name":  "al1s-terminal-linux",
+                        "path":  "terminals/al1s-terminal-linux"
+                    },
+                    {
+                        "name":  "al1s-terminal-android",
+                        "path":  "terminals/al1s-terminal-android"
+                    },
+                    {
+                        "name":  "al1s-deployment",
+                        "path":  "al1s-deployment"
+                    }
+                ],
+    "settings":  {
+                     "files.encoding":  "utf8",
+                     "files.eol":  "\n",
+                     "editor.formatOnSave":  true,
+                     "python.defaultInterpreterPath":  "${workspaceFolder:al1s-backend}/.venv/Scripts/python.exe"
+                 }
+}

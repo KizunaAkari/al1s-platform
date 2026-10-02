@@ -1,0 +1,6 @@
+# Update the Bot configuration API and production frontend on the current 0048 release.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY --from=backend --chown=al1s:al1s bots/service.py /app/al1s/bots/service.py
+COPY --from=backend --chown=al1s:al1s api/bots.py /app/al1s/api/bots.py
+COPY --from=frontend --chown=al1s:al1s . /app/frontend/

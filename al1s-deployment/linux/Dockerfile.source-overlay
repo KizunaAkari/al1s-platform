@@ -1,0 +1,8 @@
+# Source-only candidate: BASE_IMAGE must be a verified immutable image digest.
+# Do not use for dependency/assets changes; use Dockerfile.arm64 for those.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+WORKDIR /opt/al1s-terminal
+COPY al1s_terminal ./al1s_terminal
+COPY migrations ./migrations
+COPY alembic.ini pyproject.toml README.md ./

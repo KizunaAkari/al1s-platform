@@ -1,0 +1,6 @@
+subjectAltName=DNS:Yukari.local,DNS:localhost,IP:127.0.0.1
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid,issuer

@@ -1,0 +1,6 @@
+# Opt-in local login UI only. Does not publish the OneBot command API.
+# docker compose -f compose.yaml -f compose.login-local.yaml up -d llbot
+services:
+  llbot:
+    ports:
+      - "127.0.0.1:3080:3080"

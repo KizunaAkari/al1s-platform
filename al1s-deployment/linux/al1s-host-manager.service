@@ -1,0 +1,33 @@
+[Unit]
+Description=AL-1S restricted host maintenance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+UMask=0077
+EnvironmentFile=/etc/al1s/host-manager.env
+ExecStart=/opt/al1s-host-manager/venv/bin/python -m al1s_terminal.host_management
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=140
+StateDirectory=al1s-host-manager
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/al1s-host-manager
+ReadWritePaths=-/run/media/mmcblk1p8/al1s/deployment-state
+ReadWritePaths=-/run/media/mmcblk1p8/al1s/deployment.lock
+ReadWritePaths=-/run/media/mmcblk1p8/al1s/artifacts
+ReadWritePaths=-/run/media/mmcblk1p8/al1s/deployments
+ReadWritePaths=-/run/media/mmcblk1p8/al1s/data
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitNOFILE=256
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,2 @@
+# Keep shell entrypoints usable after cloning with Windows core.autocrlf.
+*.sh text eol=lf
