@@ -13,7 +13,6 @@ AL-1S 包含管理平台、独立 Bot 服务，以及 Linux / Android 终端。�
 | [terminals/al1s-terminal-android/](https://github.com/KizunaAkari/al1s-terminal/tree/main/al1s-terminal-android) | Android 终端 |
 | [al1s-deployment/](al1s-deployment/README.md) | Compose、部署脚本与发布包 |
 | docs/ | 本机私有的现行项目文档，不随克隆提供 |
-| backups/ | 当前数据库恢复备份及原始迁移资产，本机保留 |
 | data/、artifacts/、隐藏工具目录 | 运行资料、诊断证据与工具缓存 |
 
 源码、运行数据、秘密与发布包分开保存。Dockerfile 跟随构建上下文，导出产物放在 `al1s-deployment/packages/{platform,linux,android}`。现场版本和停启状态仅在部署台账维护。
