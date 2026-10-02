@@ -27,11 +27,20 @@ sh al1s-deployment/scripts/initialize-tls.sh al1s.local --ip 127.0.0.1
 
 浏览器/终端需要信任公开 `ca.crt`。TLS 初始化生成的私钥留在本机，不进入 Git 或终端。
 
-独立新环境可以先验证配置，再构建基础 Compose 所需的镜像：
+基础 TLS Compose 不会自动把 `.env` 中的浏览器 Origin 传给后端。新环境要启动浏览器管理界面时，另建本机文件 `al1s-deployment/compose/compose.browser-origins.yaml`，为后端显式配置允许的来源；按实际域名和端口修改，不使用通配来源：
+
+```yaml
+services:
+  backend:
+    environment:
+      AL1S_CORS_ORIGINS: "https://al1s.local:8443,https://localhost:8443,https://127.0.0.1:8443"
+```
+
+这沿用既有管理员 Origin/CSRF 校验，不信任任意转发来源；已有平台的 `compose.platform.yaml` 已负责同一项配置，不用此示例覆盖现有部署。独立新环境可以用这组配置先检查，再构建所需镜像：
 
 ```sh
-docker compose -p al1s-platform --env-file al1s-deployment/.env --env-file al1s-deployment/.env.tls -f al1s-deployment/compose/compose.unified.yaml -f al1s-deployment/compose/compose.tls.yaml config --quiet
-docker compose -p al1s-platform --env-file al1s-deployment/.env --env-file al1s-deployment/.env.tls -f al1s-deployment/compose/compose.unified.yaml -f al1s-deployment/compose/compose.tls.yaml build backend migrate s3-init
+docker compose -p al1s-platform --env-file al1s-deployment/.env --env-file al1s-deployment/.env.tls -f al1s-deployment/compose/compose.unified.yaml -f al1s-deployment/compose/compose.tls.yaml -f al1s-deployment/compose/compose.browser-origins.yaml config --quiet
+docker compose -p al1s-platform --env-file al1s-deployment/.env --env-file al1s-deployment/.env.tls -f al1s-deployment/compose/compose.unified.yaml -f al1s-deployment/compose/compose.tls.yaml -f al1s-deployment/compose/compose.browser-origins.yaml build backend migrate s3-init
 ```
 
 准备确认后，在全新环境中用同一组参数执行 `up -d --wait` 启动；数据库迁移和 S3 初始化是一次性服务。该基础组合为独立新环境使用，不包含现有验收平台的 external 数据卷、宿主管理、日志与 Bot 控制覆盖层；已有环境继续使用下方管理入口，不以这组参数改建现有平台。Bot 和 Linux 的 Compose 需要另行配置外部控制网络、日志收集器、身份和设备挂载。
@@ -100,10 +109,10 @@ HTTPS 默认 8443、MQTT TLS 默认 8883；长期凭据不通过明文局域网�
 
 宿主管理独立于业务容器，终端镜像不挂 Docker socket。安装入口为 [install-host-manager.sh](linux/install-host-manager.sh)，具体安装位置、数据路径和证书见部署台账。
 
-启用升级前核对 AL1S_DEPLOY_ROOT、AL1S_DEPLOY_*、AL1S_HOST_CONTAINER 及 systemd 写入白名单，再使用已安装入口：
+启用升级前核对 AL1S_DEPLOY_ROOT、AL1S_DEPLOY_*、AL1S_HOST_CONTAINER 及 systemd 写入白名单，并在当前 Shell 中导出这些已核对的变量。安装器将模块安装到 `/opt/al1s-host-manager/venv`，手工命令不会自动读取 systemd 的 EnvironmentFile；使用该虚拟环境和对应权限执行：
 
-```text
-python -m terminal_deployer --prepare-host
+```sh
+sudo --preserve-env=AL1S_DEPLOY_ROOT,AL1S_DEPLOY_COMPOSE,AL1S_DEPLOY_ENV_FILE,AL1S_DEPLOY_DATA_DIR,AL1S_DEPLOY_ADB_HOME,AL1S_DEPLOY_MODEL_DIR,AL1S_DEPLOY_CERT_DIR,AL1S_HOST_CONTAINER /opt/al1s-host-manager/venv/bin/python -m terminal_deployer --prepare-host
 ```
 
 该命令只准备维护目录和锁，不创建缺失的身份/队列，不启动服务。平台来源采用固定 HTTPS origin、独立管理凭据与可信 CA；命令不接收任意 Shell、URL 或文件路径。
