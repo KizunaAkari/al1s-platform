@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import uuid4
@@ -14,14 +15,19 @@ from al1s.adapters.postgres.artifact_models import TerminalArtifactRow
 from al1s.adapters.postgres.delivery_models import TerminalReportRow
 from al1s.adapters.postgres.failure_review import PostgresFailureReview
 from al1s.adapters.postgres.models import BlobObjectRow, GcJobRow
-from al1s.adapters.postgres.scheduling_models import ExecutionAttemptRow
+from al1s.adapters.postgres.scheduling_models import (
+    ExecutionAttemptRow,
+    TaskRequestRow,
+)
 from al1s.adapters.postgres.unit_of_work import SqlAlchemyUnitOfWork
 from al1s.api.task_failure_details import router
+from al1s.execution.definitions import canonical_manifest_hash
 from al1s.execution.delivery_types import PackageReceiptDisposition, TerminalResultKind
 from al1s.execution.errors import ExecutionDomainError
 from al1s.execution.failure_review_service import FailureReviewService
 from al1s.kernel.gc_worker import GcWorker
 from tests.integration.execution_support import (
+    FakeDefinitionProvider,
     _delivery_services,
     _prepare_terminal,
     _services,
@@ -35,6 +41,74 @@ from tests.integration.execution_support import (
 )
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.parametrize("recognition", [True, False])
+def test_formal_recognition_uses_snapshot_and_preserves_download_confirmation_gate(
+    engine, recognition,
+):
+    from tests.test_task_failure_diagnostics import fixture
+
+    manifest, diagnostic = fixture()
+    manifest["definitions"]["entry"]["target"] = {"screen_size": {"width": 320, "height": 640}}
+    manifest["definitions"]["entry"]["independent_rules"][0]["click_template_rect"] = {
+        "x": 10, "y": 20, "width": 30, "height": 40,
+    }
+    diagnostic["failure_diagnosis"] = {"recognition": {
+        "actual_score": .7, "configured_threshold": .85,
+        "best_box": {"x": 12, "y": 25, "width": 30, "height": 40},
+        "screen_size": {"width": 320, "height": 640},
+    }}
+    if not recognition:
+        diagnostic.pop("recognition_failure")
+        diagnostic["execution_failure"] = {
+            "step_index": 3, "rule_index": 0, "timeout_seconds": 20, "elapsed_seconds": 23.892,
+        }
+
+    class FormalProvider(FakeDefinitionProvider):
+        def resolve(self, logical_content_id, parameters):
+            base = super().resolve(logical_content_id, parameters)
+            return replace(base, manifest=manifest, manifest_hash=canonical_manifest_hash(manifest))
+
+    client, task, attempt, image, _blob, sessions, repository, _store, now = setup_failure(
+        engine, provider=FormalProvider()
+    )
+    with sessions.begin() as session:
+        # The synthetic provider constructs the frozen manifest before dispatch;
+        # only the mutable task classification is adjusted for this read-only API test.
+        session.get(TaskRequestRow, task).source_module = "maa"
+        report = session.scalar(
+            select(TerminalReportRow).where(
+                TerminalReportRow.attempt_id == attempt,
+                TerminalReportRow.report_kind == "attempt_result",
+            )
+        )
+        original = report.result_diagnostic
+        diagnostic["failure_screenshot"] = original["modules"][0]["result"]["failure_screenshot"]
+        report.result_diagnostic = diagnostic
+    page = repository.list_attempts(task, None, now)
+    field = "recognition_failures" if recognition else "failure_contexts"
+    assert page["items"][0][field][0]["rule_name"] == "通知"
+    response = client.get(f"/tasks/{task}/details")
+    assert response.status_code == 200
+    details = response.json()["items"][0]
+    if recognition:
+        assert details[field][0]["best_score"] == 0.84406
+        geometry = details["details"][0]["recognition_geometry"]
+        assert geometry["template_rect"]["x"] == 10
+        assert geometry["match_rect"]["x"] == 12 and geometry["match_passed"] is False
+    else:
+        assert details[field][0]["step_number"] == 4
+        assert details[field][0]["elapsed_seconds"] == 23.892
+    assert details[field][0]["script_name"] == "开始脚本"
+    # Reading/closing the frontend must never be confused with a manual download.
+    assert client.post(f"/tasks/{task}/attempts/{attempt}/confirm-failure").status_code == 409
+    assert client.get(f"/tasks/{task}/attempts/{attempt}/screenshots/{image}").status_code == 200
+    assert client.post(f"/tasks/{task}/attempts/{attempt}/confirm-failure").status_code == 204
+    assert repository.list_attempts(task, None, now)["items"][0]["recognition_failures"] == []
+    assert repository.list_attempts(task, None, now)["items"][0]["failure_contexts"] == []
+
+
 engine = _engine
 clean_tables = _clean_tables
 
@@ -61,12 +135,18 @@ class Store:
         self.deleted.append(key)
 
 
-def setup_failure(engine, *, no_image=False, local_identity=False):
+def setup_failure(
+    engine, *, no_image=False, local_identity=False, provider=None, source_module="test"
+):
     now = datetime(2026, 9, 9, tzinfo=UTC)
-    resource, scheduling = _services(engine, [now])
+    resource, scheduling = _services(engine, [now], provider)
+    if source_module != "test":
+        scheduling._definitions.register(source_module, provider)
     delivery, _ = _delivery_services(engine, [now])
     terminal, target = _prepare_terminal(resource)
-    task = scheduling.create_task(_single_command(target), correlation_id=uuid4())
+    task = scheduling.create_task(
+        replace(_single_command(target), source_module=source_module), correlation_id=uuid4()
+    )
     scheduling.materialize_due(worker_id=uuid4(), correlation_id=uuid4())
     (command,) = delivery.list_commands(terminal)
     receipt = delivery.receive_package(

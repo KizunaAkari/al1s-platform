@@ -17,6 +17,12 @@ $composeArgs = @(
     '-f', (Join-Path $deployment 'compose/compose.logging.yaml')
 )
 $services = @('postgres','seaweed-master','seaweed-volume','seaweed-filer','seaweed-s3','mosquitto','backend','tls-gateway','bot-control')
+$componentSelectors = Join-Path $deployment 'component-images.env'
+if (Test-Path -LiteralPath $componentSelectors) {
+    $composeArgs += @('--env-file', $componentSelectors,
+                     '--env-file', (Join-Path $deployment '.env.component-host'),
+                     '-f', (Join-Path $deployment 'compose/compose.components.yaml'))
+}
 switch ($Action) {
     'Status' { & docker @composeArgs ps -a }
     'Validate' { & docker @composeArgs config --quiet }

@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     bot_control_url: str = ""
     bot_control_token: SecretStr = SecretStr("")
     host_managers: dict[UUID, HostManagerConnection] = {}
+    component_host: HostManagerConnection | None = None
+    component_verification_directory: str = "/tmp/al1s-component-checks"
     terminal_heartbeat_timeout_seconds: int = Field(default=90, ge=30, le=3600)
     database_url: str = "postgresql+psycopg://al1s:change-me@localhost:5432/al1s"
     database_pool_size: int = Field(default=5, ge=1, le=100)

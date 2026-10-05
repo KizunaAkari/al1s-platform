@@ -266,6 +266,11 @@ def _install_blob_services(
         ReleaseRepository(session_factory),
         release_blob_store,
     )
+    from al1s.app.component_services import component_services
+
+    services.component_inventory, services.component_releases, services.component_upgrades = component_services(
+        settings, session_factory, release_blob_store, services.host_maintenance
+    )
     owned_blob_store: S3BlobStore | None = None
     if (
         maa_archive_import_command_service is None

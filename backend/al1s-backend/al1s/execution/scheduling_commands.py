@@ -31,6 +31,7 @@ from al1s.execution.scheduling_types import (
     TaskRequestRecord,
 )
 from al1s.execution.task_settlement import settle_task_after_execution
+from al1s.components.maintenance_guard import admit_new_work
 
 
 class SchedulingCommands(SchedulingContext):
@@ -86,6 +87,7 @@ class SchedulingCommands(SchedulingContext):
                 existing = uow.tasks.find_by_idempotency_key(task.idempotency_key)
                 if existing is not None:
                     return self._idempotent_result(uow, existing, request_hash)
+                admit_new_work(uow, command.requested_terminal_id, command.requested_target_device_id)
                 uow.tasks.add(task)
                 uow.flush()
                 if schedule is not None:

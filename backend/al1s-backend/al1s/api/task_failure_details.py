@@ -10,6 +10,7 @@ from al1s.app.service_state import service_state
 from al1s.execution.failure_details import FailureDetail
 from al1s.execution.failure_review_service import FailureReviewService
 from al1s.execution.task_captures import TaskCapture
+from al1s.maa.task_failure_diagnostics import TaskFailureContext, TaskRecognitionFailureDetail
 
 router = APIRouter()
 
@@ -27,6 +28,8 @@ class AttemptDetailsResponse(BaseModel):
     no_screenshot: bool
     details: list[FailureDetail]
     screenshots: list[TaskCapture] = Field(default_factory=list)
+    recognition_failures: list[TaskRecognitionFailureDetail] = Field(default_factory=list)
+    failure_contexts: list[TaskFailureContext] = Field(default_factory=list)
 
 
 class TaskDetailsResponse(BaseModel):

@@ -5,6 +5,7 @@ from sqlalchemy import engine_from_config, pool
 
 from al1s.adapters.postgres import artifact_models as artifact_models
 from al1s.adapters.postgres import bot_models as bot_models
+from al1s.adapters.postgres import component_models as component_models
 from al1s.adapters.postgres import delivery_models as delivery_models
 from al1s.adapters.postgres import discord_forward_models as discord_forward_models
 from al1s.adapters.postgres import editor_models as editor_models

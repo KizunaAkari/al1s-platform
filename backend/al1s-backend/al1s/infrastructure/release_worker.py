@@ -5,10 +5,14 @@ from threading import Event
 
 import structlog
 
+from al1s.adapters.postgres.maintenance_repository import MaintenanceRepository
 from al1s.adapters.postgres.release_repository import ReleaseRepository
 from al1s.adapters.s3.blob_store import S3BlobStore
+from al1s.app.component_services import component_services
 from al1s.app.config import get_settings
 from al1s.app.logging import configure_logging
+from al1s.components.monitor import start_monitor
+from al1s.execution.maintenance_service import MaintenanceService
 from al1s.infrastructure.database import create_database_engine, create_session_factory
 from al1s.releases.service import ReleaseService
 
@@ -24,10 +28,15 @@ def main() -> None:
     engine = create_database_engine(settings)
     objects = S3BlobStore(settings)
     service = ReleaseService(ReleaseRepository(create_session_factory(engine)), objects)
+    sessions = create_session_factory(engine)
+    maintenance = MaintenanceService(MaintenanceRepository(sessions), settings.host_managers)
+    _, components, upgrades = component_services(settings, sessions, objects, maintenance)
+    monitor = start_monitor(upgrades, stop)
     try:
         while not stop.is_set():
             try:
                 service.verify_once()
+                components.verify_once()
                 service.cleanup_once()
             except Exception as exc:
                 structlog.get_logger().error(
@@ -35,6 +44,8 @@ def main() -> None:
                 )
             stop.wait(5)
     finally:
+        stop.set()
+        monitor.join(timeout=20)
         objects.close()
         engine.dispose()
 

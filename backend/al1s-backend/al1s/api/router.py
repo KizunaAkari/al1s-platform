@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from al1s.api.appearance import router as appearance_router
+from al1s.api.components import router as components_router
 from al1s.api.bot_containers import router as bot_containers_router
 from al1s.api.bots import router as bots_router
 from al1s.api.discord_forward_rules import router as discord_forward_rules_router
@@ -35,6 +36,7 @@ api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(lineup_router, tags=['lineup'])
 
 api_router.include_router(appearance_router, tags=["appearance"])
+api_router.include_router(components_router, tags=["components"])
 api_router.include_router(linux_releases_router, tags=["linux-releases"])
 api_router.include_router(host_management_router, tags=["host-management"])
 api_router.include_router(bot_containers_router, tags=["bots"])

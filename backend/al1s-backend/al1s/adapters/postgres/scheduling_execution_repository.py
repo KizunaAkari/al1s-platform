@@ -4,7 +4,9 @@ from collections import defaultdict
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, exists, or_, select, update, String, cast
+from al1s.adapters.postgres.component_models import ComponentOperationRow
+from al1s.adapters.postgres.component_guard import ACTIVE
 from sqlalchemy.orm import Session
 
 from al1s.adapters.postgres.delivery_models import TaskPackageRow
@@ -101,6 +103,9 @@ class PostgresExecutionRepository:
                 TerminalRow.deleted_at.is_(None),
                 TerminalRow.service_status == "online",
                 TerminalRow.acceptance_status == "accepting",
+                ~exists(select(ComponentOperationRow.id).where(ComponentOperationRow.state.in_(ACTIVE),
+                    or_(ComponentOperationRow.scope == "platform",
+                        ComponentOperationRow.scope == "terminal:" + cast(TerminalRow.id, String)))),
             )
             .order_by(TerminalRow.id)
             .limit(limit)

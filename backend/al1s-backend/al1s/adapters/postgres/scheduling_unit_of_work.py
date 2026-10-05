@@ -13,6 +13,7 @@ from al1s.adapters.postgres.delivery_repositories import (
 )
 from al1s.adapters.postgres.execution_repositories import PostgresExecutionLeaseRepository
 from al1s.adapters.postgres.repositories import PostgresAuditRepository, PostgresOutboxRepository
+from al1s.adapters.postgres.component_guard import ComponentAdmission
 from al1s.adapters.postgres.scheduling_repositories import (
     PostgresAttemptRepository,
     PostgresExecutionRepository,
@@ -38,6 +39,7 @@ class SchedulingSqlAlchemyUnitOfWork:
             raise RuntimeError("unit of work cannot be entered twice")
         session = self._session_factory()
         self._session = session
+        self.component_admission = ComponentAdmission(session)
         self.tasks = PostgresTaskRepository(session)
         self.schedules = PostgresScheduleRepository(session)
         self.schedule_revisions = PostgresScheduleRevisionRepository(session)

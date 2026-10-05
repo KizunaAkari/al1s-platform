@@ -30,6 +30,7 @@ from al1s.adapters.postgres.repositories import (
 from al1s.adapters.postgres.scheduling_repositories import (
     PostgresContentScheduleImpactRepository,
 )
+from al1s.adapters.postgres.component_guard import ComponentAdmission
 
 
 class MaaSqlAlchemyUnitOfWork:
@@ -44,6 +45,7 @@ class MaaSqlAlchemyUnitOfWork:
             raise RuntimeError("unit of work cannot be entered twice")
         session = self._session_factory()
         self._session = session
+        self.component_admission = ComponentAdmission(session)
         self.applications = PostgresMaaApplicationRepository(session)
         self.application_deletions = PostgresMaaApplicationDeletionRepository(session)
         self.application_devices = PostgresMaaApplicationDeviceRepository(session)

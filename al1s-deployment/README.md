@@ -60,6 +60,14 @@ docker compose -p al1s-platform --env-file al1s-deployment/.env --env-file al1s-
 
 平台所在电脑的访问地址、远端地址及 TLS 配置只在部署台账维护；不要把本机回环地址配置给远端终端。
 
+## 组件版本与升级
+
+管理员 → 组件管理统一展示运行版本、版本库及升级记录。MaaFramework随Linux终端镜像升级；PostgreSQL、SeaweedFS四服务和MQTT由独立维护执行器管理。上传/校验不安装，必须选择已发布包、通过预检并确认升级。普通升级只接受已验证的兼容数据格式；未经验证的跨主版本迁移拒绝执行。
+
+初始化后，`Manage-Platform.ps1`自动加载已登记的`component-images.env`、私有`.env.component-host`及`compose.components.yaml`，日常Start不会覆盖所选版本。独立Windows执行器使用`Install-ComponentMaintenance.ps1`安装的`AL1S-Component-Maintenance`登录计划任务；私有配置、证书、固定运行包、操作日志和恢复点位于部署台账登记的目录，不得作为临时制品清理或进入Git。
+
+`Stop-ComponentMaintenance.ps1 -ConfigPath <登记配置>`仅停止对应实例，存在未结算操作时拒绝正常停止。结果未知时先在升级记录里检查实际部署并恢复，不重放操作、不自动清锁，也不在数据格式变化后盲目降级。平台/数据库停服期间的状态代理只接受指定操作的短期只读能力，没有浏览器Shell或Docker入口。
+
 ## 构建与新环境
 
 | 内容 | 入口 |

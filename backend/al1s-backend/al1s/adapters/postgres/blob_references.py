@@ -16,6 +16,7 @@ from al1s.adapters.postgres.models import BlobObjectRow
 BLOB_REFERENCE_OWNERS = MappingProxyType({
     'lineup_recognitions': 'lineup',
     "linux_releases": "platform",
+    "component_releases": "platform",
     "terminal_artifacts": "maa",
     "maa_script_version_blobs": "maa",
     "maa_quick_test_blobs": "maa",

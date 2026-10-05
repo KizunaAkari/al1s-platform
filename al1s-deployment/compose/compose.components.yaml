@@ -1,0 +1,28 @@
+# Added only after the registered current images are written to component-images.env.
+# Existing Compose project/container/data identities remain defined by the original files.
+services:
+  backend:
+    image: ${AL1S_COMPONENT_PLATFORM_IMAGE:?register current platform image}
+    environment:
+      AL1S_COMPONENT_HOST: ${AL1S_COMPONENT_HOST:?register independent component executor}
+  migrate:
+    image: ${AL1S_COMPONENT_PLATFORM_IMAGE:?register current platform image}
+  s3-init:
+    image: ${AL1S_COMPONENT_PLATFORM_IMAGE:?register current platform image}
+  log-collector:
+    image: ${AL1S_COMPONENT_PLATFORM_IMAGE:?register current platform image}
+  postgres:
+    image: ${AL1S_COMPONENT_POSTGRES_IMAGE:?register current PostgreSQL image}
+  seaweed-master:
+    image: ${AL1S_COMPONENT_S3_IMAGE:?register current SeaweedFS image}
+  seaweed-volume:
+    image: ${AL1S_COMPONENT_S3_IMAGE:?register current SeaweedFS image}
+  seaweed-filer:
+    image: ${AL1S_COMPONENT_S3_IMAGE:?register current SeaweedFS image}
+  seaweed-s3:
+    image: ${AL1S_COMPONENT_S3_IMAGE:?register current SeaweedFS image}
+  mosquitto:
+    image: ${AL1S_COMPONENT_MQTT_IMAGE:?register current MQTT image}
+  tls-gateway:
+    volumes:
+      - ./tls/generated/ca.crt:/etc/al1s/tls/component-ca.crt:ro

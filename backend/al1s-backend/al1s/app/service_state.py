@@ -45,6 +45,9 @@ from al1s.notifications.query_service import NotificationQueryService
 from al1s.notifications.review_service import ReviewService
 from al1s.notifications.service import NotificationService
 from al1s.releases.service import ReleaseService
+from al1s.components.inventory import ComponentInventoryService
+from al1s.components.releases import ComponentReleaseService
+from al1s.components.operations import ComponentUpgradeService
 
 
 @dataclass(init=False, slots=True)
@@ -83,6 +86,9 @@ class PlatformServiceState:
     maa_exports: MaaScriptExportService
     maa_export_slots: asyncio.Semaphore
     linux_releases: ReleaseService
+    component_inventory: ComponentInventoryService
+    component_releases: ComponentReleaseService
+    component_upgrades: ComponentUpgradeService
     failure_reviews: FailureReviewService
     recording_downloads: RecordingDownloadService
     maa_archive_upload_slots: asyncio.Semaphore
