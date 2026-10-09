@@ -37,6 +37,10 @@ def create_proxy(token: str, control: DockerControl) -> FastAPI:
     def state(alias: Alias) -> ContainerState:
         return control.state(alias)
 
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
     @app.post("/containers/{alias}")
     def command(alias: Alias, body: ContainerCommand) -> ContainerState:
         logger = logging.getLogger("al1s.bot_control")

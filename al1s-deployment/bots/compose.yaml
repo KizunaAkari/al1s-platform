@@ -11,15 +11,17 @@ x-retained-syslog: &retained-syslog
 services:
   llbot:
     image: linyuchen/llbot:${LLBOT_VERSION:-latest}
-    container_name: al1s-llbot
+    container_name: al1s-bot-qq
     logging: *retained-syslog
     restart: unless-stopped
     init: true
     environment:
       TZ: Asia/Shanghai
       WEBUI_PORT: 3080
-      HTTP_PROXY: ${AL1S_BOT_HTTP_PROXY:-}
-      HTTPS_PROXY: ${AL1S_BOT_HTTP_PROXY:-}
+      AUTO_LOGIN_QQ: ${AUTO_LOGIN_QQ:-}
+      # QQ has its own egress setting; an empty value keeps LLBot direct.
+      HTTP_PROXY: ${AL1S_QQ_HTTP_PROXY:-}
+      HTTPS_PROXY: ${AL1S_QQ_HTTP_PROXY:-}
       NODE_USE_ENV_PROXY: "1"
       NO_PROXY: ${AL1S_BOT_NO_PROXY:-localhost,127.0.0.1,backend,al1s-platform-app,al1s-llbot}
     volumes:
@@ -27,8 +29,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - bot-network
-      - control-network
+      bot-network:
+        aliases: [al1s-llbot]
+      control-network:
+        aliases: [al1s-llbot]
     healthcheck:
       test:
         - CMD-SHELL
@@ -40,10 +44,10 @@ services:
 
   discord-worker:
     build:
-      context: ../../backend/al1s-bot
-      dockerfile: Dockerfile
+      context: ../../backend
+      dockerfile: al1s-bot/Dockerfile
     image: ${AL1S_DISCORD_WORKER_IMAGE:-al1s-plachta:local}
-    container_name: al1s-discord-worker
+    container_name: al1s-bot-discord
     logging: *retained-syslog
     restart: unless-stopped
     init: true
@@ -57,13 +61,22 @@ services:
       HEALTH_PORT: 3100
       AL1S_BOT_HTTP_PROXY: ${AL1S_BOT_HTTP_PROXY:-}
       AL1S_BOT_NO_PROXY: ${AL1S_BOT_NO_PROXY:-localhost,127.0.0.1,backend,al1s-platform-app,al1s-llbot}
+      AL1S_MEME_BACKEND_TOKEN: ${AL1S_MEME_BACKEND_TOKEN:-}
+      AL1S_MEME_DATABASE_URL: ${AL1S_MEME_DATABASE_URL:-}
+      AL1S_MEME_MASTER_KEY: ${AL1S_MEME_MASTER_KEY:-}
+      AL1S_MEME_S3_ENDPOINT_URL: ${AL1S_MEME_S3_ENDPOINT_URL:-http://al1s-platform-storage-s3:8333}
+      AL1S_MEME_S3_BUCKET: ${AL1S_MEME_S3_BUCKET:-al1s-platform}
+      AL1S_MEME_S3_ACCESS_KEY: ${AL1S_MEME_S3_ACCESS_KEY:-}
+      AL1S_MEME_S3_SECRET_KEY: ${AL1S_MEME_S3_SECRET_KEY:-}
     volumes:
       - discord-worker-state:/var/lib/al1s-plachta
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - bot-network
-      - control-network
+      bot-network:
+        aliases: [al1s-discord-worker]
+      control-network:
+        aliases: [al1s-discord-worker]
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
@@ -71,7 +84,7 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    stop_grace_period: 20s
+    stop_grace_period: 35s
 
 networks:
   bot-network:

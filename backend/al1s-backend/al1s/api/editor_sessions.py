@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from al1s.api.android_editor_channels import router as android_channel_router
 from al1s.api.editor_channels import browser_connection
 from al1s.api.editor_channels import router as channel_router
 from al1s.api.editor_ocr import router as ocr_router
@@ -15,6 +16,7 @@ from al1s.execution.editor_sessions import EditorSession, EditorStatus
 
 router = APIRouter()
 router.include_router(channel_router)
+router.include_router(android_channel_router)
 router.include_router(ocr_router)
 
 

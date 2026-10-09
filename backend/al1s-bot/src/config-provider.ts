@@ -7,6 +7,7 @@ import type { ForwardRule } from "./bridge/forward-rule-matcher.js";
 import type { RuleForwardMessage } from "./platform-ingress.js";
 
 export interface ConfigProvider {
+  memeRequest?(path: string, init: RequestInit): Promise<Response>;
   loadForwardRules?(signal?: AbortSignal): Promise<ForwardRule[]>;
   submitMessage?(message: RuleForwardMessage): Promise<void>;
   startIngress?(): () => void;

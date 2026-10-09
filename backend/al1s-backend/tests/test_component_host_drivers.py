@@ -95,6 +95,9 @@ def test_quiescing_recovery_restarts_original_before_reading_database(tmp_path, 
     calls = []
     class Deployment:
         settings = type('Settings', (), {'state_dir': tmp_path})()
+        def services(self, component):
+            from al1s.components.host.layout import SERVICES
+            return SERVICES[component]
         def start(self, services): calls.append(('start', services))
         def stop(self, services): calls.append(('stop', services))
         def write_selectors(self, values): calls.append(('selectors', values))
@@ -127,6 +130,9 @@ def test_linux_archive_keeps_remote_identity_but_probes_loaded_local_image(tmp_p
     class Deployment:
         runner=Runner()
         settings=type('Settings',(),{'state_dir':tmp_path})()
+        def services(self, component):
+            from al1s.components.host.layout import SERVICES
+            return SERVICES[component]
         def inspect(self,_):return {'Config':{'Image':'original:version'},'Image':'sha256:'+'d'*64}
     calls=[]
     def probe(_deployment,component,image):

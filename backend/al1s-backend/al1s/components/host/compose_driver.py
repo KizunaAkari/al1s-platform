@@ -8,13 +8,9 @@ from uuid import uuid4
 from al1s.components.host.commands import CommandRunner
 from al1s.components.host.config import HostSettings
 from al1s.components.host.contracts import JsonObject
+from al1s.components.host.layout import SERVICES as SERVICES
+from al1s.components.host.layout import component_services, service_map
 
-SERVICES = {
-    "platform": ("backend",),
-    "postgresql": ("postgres",),
-    "s3": ("seaweed-master", "seaweed-volume", "seaweed-filer", "seaweed-s3"),
-    "mqtt": ("mosquitto",),
-}
 SELECTORS = {
     "platform": "AL1S_COMPONENT_PLATFORM_IMAGE",
     "postgresql": "AL1S_COMPONENT_POSTGRES_IMAGE",
@@ -35,6 +31,9 @@ class ComposeDeployment:
             raise ValueError("component_project_changed")
         return cast(JsonObject, result)
 
+    def services(self, component: str) -> tuple[str, ...]:
+        return component_services(self.config(), component)
+
     def inspect(self, service: str) -> JsonObject:
         config = self.config()
         name = config["services"][service].get("container_name")
@@ -52,7 +51,9 @@ class ComposeDeployment:
     def source_identity(self, component: str) -> str:
         config = self.config()
         return self.fingerprint(
-            config, {key: self.inspect(key) for key in SERVICES[component]}, component
+            config,
+            {key: self.inspect(key) for key in component_services(config, component)},
+            component,
         )
 
     @staticmethod
@@ -64,7 +65,7 @@ class ComposeDeployment:
                 "image": row["Image"],
                 "config": row["Config"]["Labels"].get("com.docker.compose.config-hash"),
             }
-            for key in SERVICES[component]
+            for key in component_services(config, component)
         ]
         fingerprint.append(
             {
@@ -79,7 +80,7 @@ class ComposeDeployment:
         config = self.config()
         expected = {
             service: config["services"][service]["container_name"]
-            for group in SERVICES.values()
+            for group in service_map(config).values()
             for service in group
         }
         if any(
@@ -141,7 +142,7 @@ class ComposeDeployment:
         self.write_selectors(changed)
         try:
             expected = copy.deepcopy(baseline)
-            for service in SERVICES[component]:
+            for service in component_services(baseline, component):
                 expected["services"][service]["image"] = image
             if component == "platform":
                 for name in ("migrate", "s3-init", "log-collector"):

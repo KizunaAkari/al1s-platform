@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from al1s.adapters.postgres.component_models import ComponentOperationRow
 from al1s.adapters.postgres.execution_models import TargetDeviceRow
+from al1s.adapters.postgres.device_path_models import DeviceAuthorityRow
 from al1s.execution.errors import ConflictError
 
 ACTIVE = ("accepted", "preparing", "switching", "verifying", "unknown")
@@ -26,6 +27,15 @@ class ComponentAdmission:
 
     def admit(self, terminal: UUID | None = None, device: UUID | None = None) -> None:
         admission_lock(self.session)
+        if device is not None and self.session.scalar(
+            select(
+                exists().where(
+                    DeviceAuthorityRow.device_id == device,
+                    DeviceAuthorityRow.state != "active",
+                )
+            )
+        ):
+            raise ConflictError("device_handoff_in_progress", "Device input authority is changing")
         if terminal is None and device is not None:
             terminal = self.session.scalar(
                 select(TargetDeviceRow.managing_terminal_id).where(TargetDeviceRow.id == device)

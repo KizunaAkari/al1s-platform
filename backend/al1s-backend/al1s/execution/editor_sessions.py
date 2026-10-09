@@ -62,11 +62,17 @@ def request_close(session: EditorSession, now: datetime) -> EditorSession:
     return session
 
 
-def validate_connection(connection: dict[str, str]) -> None:
+def validate_connection(connection: dict[str, str], session_id: UUID | None = None) -> None:
+    if connection.get("transport") == "android-reverse-v1":
+        _validate_reverse_connection(connection, session_id)
+        return
     required = {"transport", "session_token", "video_ws_url", "control_ws_url", "scrcpy_version"}
     optional = {"screenshot_ws_url", "foreground_ws_url", "app_icon_ws_url", "ocr_ws_url"}
-    if (not required <= set(connection) or set(connection) - required - optional
-            or connection["transport"] != "scrcpy-managed-v1"):
+    if (
+        not required <= set(connection)
+        or set(connection) - required - optional
+        or connection["transport"] != "scrcpy-managed-v1"
+    ):
         raise InvalidRequestError("invalid_editor_connection", "Unsupported editor connection")
     token = connection["session_token"]
     if not 32 <= len(token) <= 128 or not all(
@@ -107,6 +113,32 @@ def validate_connection(connection: dict[str, str]) -> None:
         raise InvalidRequestError("invalid_editor_connection", "Inconsistent editor connection")
 
 
+def _validate_reverse_connection(connection: dict[str, str], session_id: UUID | None) -> None:
+    channels = {"video", "control", "screenshot", "foreground"}
+    required = {"transport", "scrcpy_version", *(f"{c}_ws_url" for c in channels)}
+    optional = {"ocr_ws_url", "app_icon_ws_url"}
+    if (
+        not required <= set(connection)
+        or set(connection) - required - optional
+        or connection["scrcpy_version"] != "3.3.4"
+    ):
+        raise InvalidRequestError("invalid_editor_connection", "Invalid reverse connection")
+    channels |= {key.removesuffix("_ws_url") for key in optional if key in connection}
+    for channel in channels:
+        raw = connection[f"{channel}_ws_url"]
+        pieces = raw.split("/")
+        try:
+            identity = UUID(pieces[4]) if len(pieces) == 7 else None
+        except ValueError:
+            identity = None
+        if (
+            identity is None
+            or (session_id is not None and identity != session_id)
+            or raw != f"/api/v1/editor-sessions/{identity}/channels/{channel}"
+        ):
+            raise InvalidRequestError("invalid_editor_url", "Invalid reverse channel identity")
+
+
 def open_connection(session: EditorSession, cipher: FernetSecretCipher) -> dict[str, str] | None:
     if session.status is not EditorStatus.ACTIVE:
         return None
@@ -117,7 +149,7 @@ def open_connection(session: EditorSession, cipher: FernetSecretCipher) -> dict[
     if body.get("identity") != identity:
         raise SecretUnavailableError("Editor connection identity mismatch")
     connection: dict[str, str] = body["connection"]
-    validate_connection(connection)
+    validate_connection(connection, session.session_id)
     return connection
 
 
@@ -162,7 +194,7 @@ def _activate(
         return session
     if connection is None:
         raise InvalidRequestError("editor_connection_required", "Connection is required")
-    validate_connection(connection)
+    validate_connection(connection, session.session_id)
     if session.status is EditorStatus.ACTIVE:
         if (
             session.terminal_instance_id != instance_id

@@ -40,6 +40,23 @@ def sample():
     return record, connection, FernetSecretCipher("test-key-" * 8), uuid4(), now
 
 
+def test_android_reverse_connection_contains_only_session_bound_relative_channels():
+    record, _, cipher, instance, now = sample()
+    connection = {
+        "transport": "android-reverse-v1", "scrcpy_version": "3.3.4",
+        **{f"{channel}_ws_url": f"/api/v1/editor-sessions/{record.session_id}/channels/{channel}"
+           for channel in ("video", "control", "screenshot", "foreground")},
+    }
+    active = report_session(
+        record, record.terminal_id, instance, EditorStatus.ACTIVE, now, cipher, connection,
+    )
+    assert open_connection(active, cipher) == connection
+    connection["video_ws_url"] = f"/api/v1/editor-sessions/{uuid4()}/channels/video"
+    with pytest.raises(InvalidRequestError):
+        report_session(record, record.terminal_id, instance, EditorStatus.ACTIVE,
+                       now, cipher, connection)
+
+
 def test_native_screenshot_capability_is_optional_and_encrypted():
     record, connection, cipher, instance, now = sample()
     validate_connection(connection)  # Existing terminals remain compatible.

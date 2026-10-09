@@ -2,7 +2,7 @@ import json
 import ssl
 import time
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener
 from uuid import UUID
 
@@ -23,6 +23,7 @@ class HostInventoryItem(Contract):
     image: str | None = Field(default=None, max_length=256)
     image_id: str | None = Field(default=None, max_length=71)
     source_identity: str | None = Field(default=None, max_length=64)
+    storage_layout: Literal["legacy", "bundle"] | None = None
 
 
 class ComponentHostClient:

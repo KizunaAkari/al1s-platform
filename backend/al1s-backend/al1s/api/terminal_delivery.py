@@ -19,6 +19,7 @@ from al1s.execution.delivery_types import (
     TerminalReportDisposition,
     TerminalResultKind,
 )
+from al1s.execution.package_builder import canonical_package_text
 
 router = APIRouter()
 
@@ -61,6 +62,7 @@ class TaskPackageResponse(BaseModel):
     package_hash: str
     status: PackageStatus
     body: dict[str, Any]
+    canonical_body: str | None = None
     row_version: int
 
 
@@ -227,6 +229,7 @@ def get_task_package(
         package_hash=package.package_hash,
         status=package.status,
         body=package.manifest,
+        canonical_body=canonical_package_text(package.manifest),
         row_version=package.row_version,
     )
 

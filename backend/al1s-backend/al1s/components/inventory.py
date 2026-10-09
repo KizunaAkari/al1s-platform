@@ -30,6 +30,7 @@ def native_entry(item: NativeComponent) -> ComponentInventoryEntry:
         image=item.image,
         image_id=item.image_id,
         source_identity=item.source_identity,
+        storage_layout=item.storage_layout,
     )
 
 

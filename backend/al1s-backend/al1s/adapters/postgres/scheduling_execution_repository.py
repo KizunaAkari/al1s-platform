@@ -4,12 +4,13 @@ from collections import defaultdict
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, exists, or_, select, update, String, cast
-from al1s.adapters.postgres.component_models import ComponentOperationRow
-from al1s.adapters.postgres.component_guard import ACTIVE
+from sqlalchemy import String, and_, cast, exists, or_, select, update
 from sqlalchemy.orm import Session
 
+from al1s.adapters.postgres.component_guard import ACTIVE
+from al1s.adapters.postgres.component_models import ComponentOperationRow
 from al1s.adapters.postgres.delivery_models import TaskPackageRow
+from al1s.adapters.postgres.device_path_models import DeviceAuthorityRow
 from al1s.adapters.postgres.execution_models import (
     ExecutionLeaseRow,
     TargetDeviceRow,
@@ -85,6 +86,12 @@ class PostgresExecutionRepository:
             select(TargetDeviceRow.id, TargetDeviceRow.managing_terminal_id).where(
                 TargetDeviceRow.deleted_at.is_(None),
                 TargetDeviceRow.managing_terminal_id.is_not(None),
+                ~exists(
+                    select(DeviceAuthorityRow.device_id).where(
+                        DeviceAuthorityRow.device_id == TargetDeviceRow.id,
+                        DeviceAuthorityRow.state != "active",
+                    )
+                ),
                 or_(
                     TargetDeviceRow.id.in_(requested_target_device_ids),
                     TargetDeviceRow.managing_terminal_id.in_(requested_terminal_ids),
@@ -103,9 +110,16 @@ class PostgresExecutionRepository:
                 TerminalRow.deleted_at.is_(None),
                 TerminalRow.service_status == "online",
                 TerminalRow.acceptance_status == "accepting",
-                ~exists(select(ComponentOperationRow.id).where(ComponentOperationRow.state.in_(ACTIVE),
-                    or_(ComponentOperationRow.scope == "platform",
-                        ComponentOperationRow.scope == "terminal:" + cast(TerminalRow.id, String)))),
+                ~exists(
+                    select(ComponentOperationRow.id).where(
+                        ComponentOperationRow.state.in_(ACTIVE),
+                        or_(
+                            ComponentOperationRow.scope == "platform",
+                            ComponentOperationRow.scope
+                            == "terminal:" + cast(TerminalRow.id, String),
+                        ),
+                    )
+                ),
             )
             .order_by(TerminalRow.id)
             .limit(limit)

@@ -1,11 +1,13 @@
 import type { DiscordRuleBridge } from "./bridge/service.js";
 import type { HealthState } from "./health/state.js";
 import type { Logger } from "./logger.js";
+import type { MemeCommandService } from "./memes/service.js";
 
 export interface RuntimeServices {
   bridge: DiscordRuleBridge;
   health: HealthState;
   logger: Logger;
+  memes?: MemeCommandService;
 }
 
 let currentRuntime: RuntimeServices | null = null;

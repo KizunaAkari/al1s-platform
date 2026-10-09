@@ -118,7 +118,8 @@ def test_current_lease_does_not_force_release_active_or_closing(status):
                         now - timedelta(minutes=1), now - timedelta(seconds=1), now)
     writes = []
     tx = SimpleNamespace(target_terminal=lambda _: row.terminal_id,
-                         by_device=lambda _: row, put=lambda new, old: writes.append(new))
+                         by_device=lambda _, **_kwargs: row, get=lambda _: row,
+                         put=lambda new, old: writes.append(new))
     @contextmanager
     def transactions():
         yield tx

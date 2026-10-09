@@ -67,6 +67,11 @@ def create_host(settings: HostSettings) -> FastAPI:
         ):
             raise HTTPException(401, detail="component_host_unauthorized")
 
+    @app.get("/health")
+    def health(authorization: str | None = Header(None)) -> JsonObject:
+        authorize(authorization)
+        return {"status": "ok"}
+
     @app.middleware("http")
     async def bounded_request(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]

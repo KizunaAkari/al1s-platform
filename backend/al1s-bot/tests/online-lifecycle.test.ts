@@ -130,8 +130,8 @@ function installIndexMocks(options: {
 
   vi.doMock("@sapphire/framework", () => ({ SapphireClient: SapphireClientMock }));
   vi.doMock("discord.js", () => ({ GatewayIntentBits: {
-    Guilds: 1, GuildMessages: 2, MessageContent: 4,
-  } }));
+    Guilds: 1, GuildMessages: 2, MessageContent: 4, DirectMessages: 8,
+  }, Partials: { Channel: 1 } }));
   vi.doMock("../src/bridge/dedupe.js", () => ({ MessageDeduplicator: MessageDeduplicatorMock }));
   vi.doMock("../src/bridge/service.js", () => ({ DiscordRuleBridge: DiscordRuleBridgeMock }));
   vi.doMock("../src/config-provider.js", () => ({

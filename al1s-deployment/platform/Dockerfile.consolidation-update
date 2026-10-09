@@ -1,0 +1,3 @@
+ARG PLATFORM_IMAGE
+FROM ${PLATFORM_IMAGE}
+COPY backend/al1s-backend/al1s/components/contracts.py backend/al1s-backend/al1s/components/types.py backend/al1s-backend/al1s/components/host_client.py backend/al1s-backend/al1s/components/inventory.py backend/al1s-backend/al1s/components/operations.py /app/al1s/components/

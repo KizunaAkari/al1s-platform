@@ -2,7 +2,9 @@
 
 本项目负责 Compose、TLS、部署脚本和发布包。公开克隆入口见[平台 README](../README.md)；现场运行版本、数据身份和恢复条件在本机私有部署台账维护，不随源码发布。
 
-已有平台的项目名为 `al1s-platform`，应用容器为 `al1s-platform-app`；Bot 项目为 `al1s-bot`，容器为 `al1s-llbot` 和 `al1s-discord-worker`；Linux 容器为 `al1s-terminal-linux`。升级和重建沿用既定名称，核对完整 Compose 覆盖结果和命令行项目名，避免基础文件或工作目录默认值改变现用环境。
+已有平台的项目名为 `al1s-platform`，应用容器为 `al1s-platform-app`；Bot 项目为 `al1s-bot`，容器为 `al1s-bot-qq` 和 `al1s-bot-discord`；Linux 容器为 `al1s-terminal-linux`。升级和重建沿用既定名称，核对完整 Compose 覆盖结果和命令行项目名，避免基础文件或工作目录默认值改变现用环境。
+
+AI执行部署前遵守[容器复用与宿主进程确认规则](../AGENTS.md#reuse-containers-and-confirm-host-processes)：现有容器适合承载时必须复用；新增宿主服务、后台/监听进程或启动项须先说明并由YY明确确认。文档中的安装命令本身不是新增进程的授权。
 
 ## 新环境配置与构建
 
@@ -10,7 +12,7 @@
 
 ```sh
 docker build -f al1s-deployment/platform/Dockerfile -t al1s-platform:local .
-docker build -f backend/al1s-bot/Dockerfile -t al1s-plachta:local backend/al1s-bot
+docker build -f backend/al1s-bot/Dockerfile -t al1s-plachta:local backend
 ```
 
 新环境复制 `.env.example`、`.env.tls.example` 到本机环境文件，替换全部秘密占位值并设置管理员密码。TLS 的公开平台/S3/MQTT 地址与证书 SAN 要一致；默认配置以 `al1s.local` 为例。仅在新环境生成 CA，现有平台不得覆盖当前 CA：
@@ -60,13 +62,23 @@ docker compose -p al1s-platform --env-file al1s-deployment/.env --env-file al1s-
 
 平台所在电脑的访问地址、远端地址及 TLS 配置只在部署台账维护；不要把本机回环地址配置给远端终端。
 
+## 当前单机合并布局
+
+平台常驻7个服务：backend、tls-gateway、postgres、storage、mosquitto、ops、log-collector；Bot保留llbot和discord-worker两个服务键，显示容器名为al1s-bot-qq/al1s-bot-discord。旧内部DNS别名仍兼容，不重写现有连接、对象键、队列或账号身份。
+
+私有`.env.consolidation`登记组合镜像和布局，Manage-Platform自动加载compose.ops.yaml与compose.storage.yaml；常规Start不启动legacy profile或初始化服务。首次迁移/初始化使用完整配置的显式工具入口`run --rm --no-deps migrate` / `s3-init`，不要以整体up制造退出对象。旧profile只用于明确恢复，不与新存储同时运行。
+
+存储镜像用storage/Dockerfile和明确的PLATFORM_IMAGE、SEAWEED_IMAGE构建；原四份卷分别挂至master/volume/filer/s3目录，镜像带布局标记并逐角色健康检查。ops/Dockerfile以已核对维护镜像构建，两个控制进程保留独立端口/Token；它保持平台停服执行和状态查询，日志独立。布局、备份和固定写入者停写/恢复一起校验；原始weed镜像不能直接替换组合存储。
+
 ## 组件版本与升级
 
 管理员 → 组件管理统一展示运行版本、版本库及升级记录。MaaFramework随Linux终端镜像升级；PostgreSQL、SeaweedFS四服务和MQTT由独立维护执行器管理。上传/校验不安装，必须选择已发布包、通过预检并确认升级。普通升级只接受已验证的兼容数据格式；未经验证的跨主版本迁移拒绝执行。
 
-初始化后，`Manage-Platform.ps1`自动加载已登记的`component-images.env`、私有`.env.component-host`及`compose.components.yaml`，日常Start不会覆盖所选版本。独立Windows执行器使用`Install-ComponentMaintenance.ps1`安装的`AL1S-Component-Maintenance`登录计划任务；私有配置、证书、固定运行包、操作日志和恢复点位于部署台账登记的目录，不得作为临时制品清理或进入Git。
+初始化后，`Manage-Platform.ps1`自动加载已登记的`component-images.env`、私有`.env.component-host`及`compose.components.yaml`，日常Start不会覆盖所选版本。维护模块属于后端工程，以`ops`服务和`al1s-platform-ops`容器纳入同一平台Compose，统一启停、健康和日志，不发布宿主端口，不注册Windows登录任务。仅维护容器承载维护Docker权限，API和Bot控制代理权限不扩大。私有配置、证书、操作日志和恢复点保留在登记部署目录，不得作为临时制品清理或进入Git。
 
-`Stop-ComponentMaintenance.ps1 -ConfigPath <登记配置>`仅停止对应实例，存在未结算操作时拒绝正常停止。结果未知时先在升级记录里检查实际部署并恢复，不重放操作、不自动清锁，也不在数据格式变化后盲目降级。平台/数据库停服期间的状态代理只接受指定操作的短期只读能力，没有浏览器Shell或Docker入口。
+维护镜像用工作区根目录作为构建上下文：`docker build -f al1s-deployment/component-maintenance/Dockerfile --build-arg PLATFORM_IMAGE=<已核对的兼容平台镜像> -t al1s-component-maintenance:local .`。Docker CLI来源固定摘要；离线构建可用`DOCKER_CLI_IMAGE`指定已核对的本机CLI镜像。登记入口`component-maintenance/register.py`接受现有私有`host.json`、明确的`--engine-root`、`--platform-url`及`--image`，沿用原凭据/目录和现有CA生成内部服务证书。平台URL须是该网关证书覆盖的DNS地址；网关内部别名使用同一主机名。`--engine-root`必须是在Docker引擎和维护容器内指向同一物理目录的Linux绝对路径，Windows/Docker Desktop先以无网络子容器验证绑定源，不能把Windows路径直接当Linux挂载源。填写值使用私有`.env.component-host`，公开字段示例见`.env.component-host.example`。
+
+正常维护容器随`Manage-Platform.ps1`的Start/Stop操作，未结算维护操作或无法核验状态时拒绝整体停止。`Stop-ComponentMaintenance.ps1 -ConfigPath <旧登记配置> -RemoveLogonTask`仅供旧Windows部署转换时精确移除裸进程/任务；旧Install入口已拒绝安装。结果未知时先在升级记录里检查实际部署并恢复，不重放操作、不自动清锁，也不在数据格式变化后盲目降级。平台/数据库停服期间的状态代理只接受指定操作的短期只读能力，没有浏览器Shell或Docker入口。
 
 ## 构建与新环境
 
@@ -84,7 +96,7 @@ docker compose -p al1s-platform --env-file al1s-deployment/.env --env-file al1s-
 
 平台应用包含静态前端、API 和六个 worker：events、media、scheduler、notifications、terminal-monitor、release-verifier。Supervisor 七进程与 API 依赖均正常才健康；停止总预算 390 秒，迁移不由常驻 worker 重复运行。
 
-Bot 容器控制代理由同一平台 Compose 项目管理，随 `Manage-Platform.ps1` 的 Status、Start、Stop 一起操作。它仍是独立容器：只有代理挂载 Docker socket；平台应用不挂载。代理仅接入内部控制网络，不发布宿主端口，目标固定为部署配置中的 QQ 和 Discord 容器。Socket 本身具有宿主 Docker 的广泛权限，因此变更代理配置和镜像前须单独核对。
+Bot 容器控制代理由同一平台 Compose 项目管理，随 `Manage-Platform.ps1` 的 Status、Start、Stop 一起操作。它是ops内的独立鉴权进程，与维护执行器共同受容器管理；只有ops承载Docker管理权限，平台应用不挂载。代理仅接入内部控制网络，不发布宿主端口，目标固定为部署配置中的 QQ 和 Discord 容器。Socket 本身具有宿主 Docker 的广泛权限，因此变更代理配置和镜像前须单独核对。
 
 新开发环境可以从部署目录使用以下入口，先明确独立项目、端口、网络、卷和环境文件：
 
@@ -115,7 +127,7 @@ HTTPS 默认 8443、MQTT TLS 默认 8883；长期凭据不通过明文局域网�
 
 ## Linux 宿主管理
 
-宿主管理独立于业务容器，终端镜像不挂 Docker socket。安装入口为 [install-host-manager.sh](linux/install-host-manager.sh)，具体安装位置、数据路径和证书见部署台账。
+已登记的Linux宿主管理独立于业务容器，终端镜像不挂Docker socket；新增实例或宿主启动项须按AGENTS取得明确确认。安装入口为 [install-host-manager.sh](linux/install-host-manager.sh)，具体安装位置、数据路径和证书见部署台账。
 
 启用升级前核对 AL1S_DEPLOY_ROOT、AL1S_DEPLOY_*、AL1S_HOST_CONTAINER 及 systemd 写入白名单，并在当前 Shell 中导出这些已核对的变量。安装器将模块安装到 `/opt/al1s-host-manager/venv`，手工命令不会自动读取 systemd 的 EnvironmentFile；使用该虚拟环境和对应权限执行：
 
@@ -138,3 +150,13 @@ sudo --preserve-env=AL1S_DEPLOY_ROOT,AL1S_DEPLOY_COMPOSE,AL1S_DEPLOY_ENV_FILE,AL
 该辅助仅解决指定容器到指定终端主机名的解析。同源编辑通道由平台显式配置允许的 WSS 上游与公开 CA，不以此推断文件直传或其他网络链路通过。
 
 浏览器登录自检入口为 [check-browser-login.cjs](scripts/check-browser-login.cjs)，需要本机 Playwright，可用 AL1S_PLAYWRIGHT_MODULE 指定安装路径、NODE_EXTRA_CA_CERTS 指向公开 CA。验证结果写测试计划，不在本页追加。
+
+### 表情包工坊兼容部署
+
+LLBot网络出口由`AL1S_QQ_HTTP_PROXY`单独控制，默认留空直连；Discord及其表情后端继续使用`AL1S_BOT_HTTP_PROXY`。调整QQ出口使用QQ当前登记的私有环境文件及完整Compose层，只重建`llbot`服务，不重建正常运行的`discord-worker`。不关闭TLS验证；环境代理留空不等于绕过宿主机的VPN/TUN路由。
+
+表情功能后端与Node Worker同处`al1s-bot-discord`，QQ网关为`al1s-bot-qq`（旧名称保留为内部DNS别名）；前端/鉴权转发随平台发布，不增加功能容器。Bot镜像使用`backend/`构建上下文；共用既有控制网络，不向宿主发布3101端口。内置的Python后端使用Bot环境中的`AL1S_MEME_*`数据/S3/解密能力和专用控制Token；平台仅需受控后端URL及同一控制Token。示例不提供真实秘密，实际权限/环境在授权发布时核对。
+
+0054→0055、平台新Blob引用GC/鉴权转发/前端、Bot的Python/Node组成同一兼容单元；先在无受影响写入时按原流程保护数据并迁移，再启动同版本写入者。不得让旧GC与新素材写入者并行，不回退或删除已有模板数据。QQ事件WS和启用范围由管理员明确配置；账号资料、Worker队列/身份、固定项目/容器/卷/网络保持。只构建镜像不等于部署或真实账号送达通过。
+
+网络不可用时，平台候选可通过`platform/Dockerfile.meme-workshop-update`复用已审阅的0054运行依赖，具名构建上下文`backend=backend/al1s-backend`、`frontend=al1s-frontend/dist`。先完成当前源码测试和前端构建，显式提供`BASE_IMAGE`；该方式复制一致的完整平台源码及迁移快照，避免新API工厂与旧基础模块混装。它不是可任意套在其他历史版本上的局部补丁，也不改变容器启动程序或执行迁移。

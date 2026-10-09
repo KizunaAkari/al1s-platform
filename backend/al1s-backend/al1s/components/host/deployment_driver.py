@@ -9,8 +9,10 @@ from al1s.components.host.backup import backup_data, checksum, private_json, sch
 from al1s.components.host.compose_driver import SERVICES, ComposeDeployment
 from al1s.components.host.contracts import JsonObject
 from al1s.components.host.drivers import mqtt, platform, postgresql, seaweedfs
+from al1s.components.host.layout import storage_layout, validate_s3_image
 from al1s.components.host.platform_client import PlatformComponentClient
-from al1s.components.host.probes import inventory, probe_image
+from al1s.components.host.probes import inventory, probe_image, probe_storage_layout
+from al1s.components.host.writers import capture_writer, writer_action
 from al1s.components.verification import DockerArchiveVerifier
 
 COMPATIBLE = {
@@ -60,13 +62,15 @@ class DeploymentDriver:
             "phase": "prepared",
             "selectors": self.deployment.selectors(),
             "images": {
-                name: self.deployment.inspect(name)["Image"] for name in SERVICES[release.component]
+                name: self.deployment.inspect(name)["Image"]
+                for name in self.deployment.services(release.component)
             },
             "schema": schema_revision(self.deployment),
             "component": release.component,
             "source": operation.expected_source,
             "native_version": current["version"],
             "utility_image": self.deployment.inspect("backend")["Image"],
+            "writer": capture_writer(self.deployment) if release.component == "s3" else None,
         }
         private_json(directory / "snapshot.json", snapshot)
         if release.data_policy == "alembic" and snapshot["schema"] != release.schema_from:
@@ -76,7 +80,7 @@ class DeploymentDriver:
     def verify_archive(self, path: Path, release: ComponentRelease) -> None:
         DockerArchiveVerifier(lambda *_: release.native_version).verify(path, release)
         for component in SERVICES:
-            for service in SERVICES[component]:
+            for service in self.deployment.services(component):
                 row = self.deployment.inspect(service)
                 if (
                     row["Config"]["Image"].split("@")[0] == release.candidate_image
@@ -93,6 +97,11 @@ class DeploymentDriver:
             release.component != "linux-terminal" and image["Id"] != release.expected_image_id
         ) or image["Architecture"] != release.architecture:
             raise ValueError("component_loaded_image_mismatch")
+        if release.component == "s3":
+            layout = storage_layout(self.deployment.config())
+            validate_s3_image(layout, image)
+            if layout == "bundle":
+                probe_storage_layout(self.deployment, image["Id"])
         if probe_image(self.deployment, release.component, image["Id"]) != release.native_version:
             raise ValueError("component_native_version_mismatch")
         if (
@@ -109,11 +118,12 @@ class DeploymentDriver:
             raise ValueError("component_source_changed")
         snapshot["phase"] = "quiescing"
         private_json(directory / "snapshot.json", snapshot)
+        writer_action(self.deployment, snapshot.get("writer"), "stop")
         self.deployment.stop(("backend",))
         if release.component != "platform":
             if release.component == "postgresql":
                 backup_data(self.deployment, "postgresql", directory, snapshot["utility_image"])
-            self.deployment.stop(SERVICES[release.component])
+            self.deployment.stop(self.deployment.services(release.component))
         if release.component in {"platform", "s3", "mqtt"}:
             backup_data(self.deployment, release.component, directory, snapshot["utility_image"])
         snapshot["phase"] = "activating"
@@ -121,14 +131,17 @@ class DeploymentDriver:
         self.deployment.change_image(release.component, release.candidate_image)
         if release.component == "platform":
             platform.migrate(self.deployment, release)
-        self.deployment.start(SERVICES[release.component])
+        self.deployment.start(self.deployment.services(release.component))
         if release.component != "platform":
             self.deployment.start(("backend",))
 
     def verify(self, identity: UUID, payload: JsonObject, point: JsonObject) -> bool:
         release = ComponentRelease.model_validate(payload["release"])
         for _ in range(60):
-            rows = [self.deployment.inspect(name) for name in SERVICES[release.component]]
+            rows = [
+                self.deployment.inspect(name)
+                for name in self.deployment.services(release.component)
+            ]
             healthy = all(
                 row["Image"] == release.expected_image_id
                 and row["State"].get("Running")
@@ -142,7 +155,11 @@ class DeploymentDriver:
                     for row in inventory(self.deployment)
                     if row["component"] == release.component
                 )
-                return bool(actual["version"] == release.native_version)
+                valid = bool(actual["version"] == release.native_version)
+                if valid:
+                    snapshot = json.loads((self.directory(identity) / "snapshot.json").read_text())
+                    writer_action(self.deployment, snapshot.get("writer"), "start")
+                return valid
             time.sleep(2)
         return False
 
@@ -164,7 +181,7 @@ class DeploymentDriver:
             ):
                 return "unknown"
             self.deployment.write_selectors(snapshot["selectors"])
-            self.deployment.start(SERVICES[release.component])
+            self.deployment.start(self.deployment.services(release.component))
             self.deployment.start(("backend",))
             return self.verify_original(snapshot)
         if (
@@ -178,9 +195,9 @@ class DeploymentDriver:
             if not item.is_relative_to(directory.resolve()) or checksum(item) != digest:
                 return "unknown"
         self.deployment.stop(("backend",))
-        self.deployment.stop(SERVICES[release.component])
+        self.deployment.stop(self.deployment.services(release.component))
         self.deployment.write_selectors(snapshot["selectors"])
-        self.deployment.start(SERVICES[release.component])
+        self.deployment.start(self.deployment.services(release.component))
         if release.component != "platform":
             self.deployment.start(("backend",))
         return self.verify_original(snapshot)
@@ -197,6 +214,7 @@ class DeploymentDriver:
                     backend["State"].get("Health", {}).get("Status") == "healthy"
                     and schema_revision(self.deployment) == snapshot["schema"]
                 ):
+                    writer_action(self.deployment, snapshot.get("writer"), "start")
                     return "failed_safe"
             time.sleep(2)
         return "unknown"

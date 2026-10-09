@@ -38,6 +38,8 @@ class Settings(BaseSettings):
         return validate_public_url(value)
 
     frontend_directory: str | None = None
+    meme_backend_url: str = ""
+    meme_backend_token: SecretStr = SecretStr("")
     environment: str = "development"
     admin_password: SecretStr = SecretStr("")
     admin_cookie_secure: bool = True

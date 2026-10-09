@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from al1s.components.contracts import ComponentRelease
@@ -16,6 +16,7 @@ class NativeComponent:
     image: str | None = None
     image_id: str | None = None
     source_identity: str | None = None
+    storage_layout: Literal["legacy", "bundle"] | None = None
 
 
 @dataclass(frozen=True, slots=True)

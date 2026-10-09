@@ -200,7 +200,7 @@ def test_adb_observation_reports_connection_authorization_and_staleness(
     assert unauthorized.observed_at is not None
     service._now = lambda: unauthorized.observed_at + timedelta(seconds=31)
     stale = service.list_target_devices(limit=10)[0]
-    assert stale.availability == "disconnected"
+    assert stale.availability == "unknown"
     assert stale.availability_reason == "adb_observation_stale"
 
 

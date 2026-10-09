@@ -34,6 +34,19 @@ cd AL1S
 git submodule update --init --recursive
 ```
 
+## 本地 Git 工作区
+
+工作区根目录对应 `al1s-platform`；`al1s-frontend/` 和 `terminals/` 分别是独立仓库，平台通过子模块记录它们的提交。修改子项目时，先在对应目录提交和推送，再在根目录提交更新后的子模块引用。
+
+```sh
+git status
+git -C al1s-frontend status
+git -C terminals status
+git submodule status
+```
+
+新克隆的子模块可能处于 detached HEAD；开始修改前在对应目录创建工作分支，例如 `git switch -c my-change`。已有本地修改时，先检查 diff，不直接运行会改变检出文件的子模块更新命令。命令行提交需要配置自己的 `user.name`、`user.email`，推送需要 GitHub 登录；不要把访问 token 写入 remote URL 或源码。
+
 ## 构建容器镜像
 
 以下命令从平台仓库根目录执行，只构建镜像，不启动服务、不迁移数据库。
@@ -43,7 +56,7 @@ git submodule update --init --recursive
 docker build -f al1s-deployment/platform/Dockerfile -t al1s-platform:local .
 
 # 独立 Discord Worker
-docker build -f backend/al1s-bot/Dockerfile -t al1s-plachta:local backend/al1s-bot
+docker build -f backend/al1s-bot/Dockerfile -t al1s-plachta:local backend
 
 # 仅后端 API，供独立开发或迁移工具使用
 docker build --target runtime -t al1s-backend:local backend/al1s-backend

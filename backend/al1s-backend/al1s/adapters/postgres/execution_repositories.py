@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from al1s.adapters.postgres.delivery_models import OfflineStartPermitRow
+from al1s.adapters.postgres.device_path_models import DeviceAuthorityRow, DevicePathRow
 from al1s.adapters.postgres.editor_models import EditorSessionRow
 from al1s.adapters.postgres.execution_models import (
     ExecutionLeaseRow,
@@ -571,24 +572,45 @@ class PostgresTargetDeviceRepository:
     def has_pending_control(self, device_id: UUID, manager_id: UUID | None) -> bool:
         # The caller holds the target row lock; all new control work takes the same lock.
         predicates = (
-            select(ExecutionRow.id).where(
+            # A legacy mode write has no physical-release receipt. It must not
+            # replace the coordinated holder while its endpoint owns input.
+            select(DeviceAuthorityRow.device_id)
+            .where(
+                DeviceAuthorityRow.device_id == device_id,
+                DeviceAuthorityRow.holder_terminal_id.is_not(None),
+                DeviceAuthorityRow.state.in_(("active", "releasing")),
+                select(DevicePathRow.device_id).where(
+                    DevicePathRow.device_id == device_id,
+                    DevicePathRow.terminal_id == DeviceAuthorityRow.holder_terminal_id,
+                    DevicePathRow.authority_protocol == 1,
+                ).exists(),
+            ).exists(),
+            select(ExecutionRow.id)
+            .where(
                 ExecutionRow.target_device_id == device_id,
                 ExecutionRow.status.in_(("waiting", "queued", "running")),
-            ).exists(),
-            select(OfflineStartPermitRow.id).where(
+            )
+            .exists(),
+            select(OfflineStartPermitRow.id)
+            .where(
                 OfflineStartPermitRow.target_device_id == device_id,
                 OfflineStartPermitRow.status == "issued",
                 *([OfflineStartPermitRow.terminal_id == manager_id] if manager_id else []),
-            ).exists(),
-            select(EditorSessionRow.id).where(
+            )
+            .exists(),
+            select(EditorSessionRow.id)
+            .where(
                 EditorSessionRow.device_id == device_id,
                 EditorSessionRow.status.in_(("pending", "active", "closing")),
-            ).exists(),
-            select(MaaQuickTestSessionRow.id).where(
+            )
+            .exists(),
+            select(MaaQuickTestSessionRow.id)
+            .where(
                 MaaQuickTestSessionRow.target_device_id == device_id,
                 MaaQuickTestSessionRow.status.in_(("issued", "claimed")),
                 *([MaaQuickTestSessionRow.terminal_id == manager_id] if manager_id else []),
-            ).exists(),
+            )
+            .exists(),
         )
         return bool(self._session.scalar(select(or_(*predicates))))
 
@@ -702,18 +724,34 @@ class PostgresTargetDeviceRepository:
             select(
                 TargetDeviceRow.id,
                 TerminalRow.service_status,
-                observation.c.adb_state,
-                observation.c.observed_at,
+                case(
+                    (
+                        TargetDeviceRow.mode == "standalone",
+                        case((DevicePathRow.control_ready, "device"), else_="offline"),
+                    ),
+                    else_=observation.c.adb_state,
+                ),
+                case(
+                    (TargetDeviceRow.mode == "standalone", DevicePathRow.observed_at),
+                    else_=observation.c.observed_at,
+                ),
             )
             .select_from(TargetDeviceRow)
             .outerjoin(TerminalRow, TerminalRow.id == TargetDeviceRow.managing_terminal_id)
             .outerjoin(observation, true())
+            .outerjoin(
+                DevicePathRow,
+                (DevicePathRow.device_id == TargetDeviceRow.id)
+                & (DevicePathRow.terminal_id == TargetDeviceRow.managing_terminal_id)
+                & (DevicePathRow.kind == "android"),
+            )
             .where(TargetDeviceRow.id.in_(device_ids))
         )
         return {
             device_id: (terminal_status, adb_state, observed_at)
-            for device_id, terminal_status, adb_state, observed_at
-            in self._session.execute(statement)
+            for device_id, terminal_status, adb_state, observed_at in self._session.execute(
+                statement
+            )
         }
 
     def has_managed_by(self, terminal_id: UUID) -> bool:
@@ -825,8 +863,10 @@ class PostgresTargetIdentifierRepository:
             .where(
                 TargetDeviceIdentifierRow.id == identifier_id,
                 TargetDeviceIdentifierRow.deleted_at.is_(None),
-                (TargetDeviceIdentifierRow.observed_at.is_(None)
-                 | (TargetDeviceIdentifierRow.observed_at <= observed_at)),
+                (
+                    TargetDeviceIdentifierRow.observed_at.is_(None)
+                    | (TargetDeviceIdentifierRow.observed_at <= observed_at)
+                ),
             )
             .values(adb_state=adb_state, observed_at=observed_at)
             .returning(TargetDeviceIdentifierRow)
@@ -855,8 +895,10 @@ class PostgresTargetIdentifierRepository:
             update(TargetDeviceIdentifierRow)
             .where(
                 TargetDeviceIdentifierRow.id.in_(ids),
-                (TargetDeviceIdentifierRow.observed_at.is_(None)
-                 | (TargetDeviceIdentifierRow.observed_at <= observed_at)),
+                (
+                    TargetDeviceIdentifierRow.observed_at.is_(None)
+                    | (TargetDeviceIdentifierRow.observed_at <= observed_at)
+                ),
             )
             .values(
                 adb_state=case(dict(items), value=TargetDeviceIdentifierRow.id),

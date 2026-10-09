@@ -410,6 +410,12 @@ export class PlatformConfigProvider implements ConfigProvider {
     });
   }
 
+  public memeRequest(path: string, init: RequestInit): Promise<Response> {
+    if (!path.startsWith("/api/v1/bots/worker/memes/") || path.includes("..")
+      || path.includes("?") || path.includes("#")) throw new Error("invalid_meme_endpoint");
+    return this.request(path, init);
+  }
+
   private async postRuleMatch(message: RuleForwardMessage): Promise<number | { status: number; code?: string }> {
     const result = await this.request("/api/v1/bots/worker/rule-matches", {
       method: "POST", headers: { "Content-Type": "application/json" },

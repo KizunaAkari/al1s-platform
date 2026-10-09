@@ -8,6 +8,7 @@ from uuid import UUID
 
 from starlette.concurrency import run_in_threadpool
 
+from al1s.execution.android_editor_transport import AndroidEditorHub
 from al1s.execution.editor_service import EditorSessionService
 from al1s.execution.editor_sessions import EditorStatus
 from al1s.infrastructure.editor_relay import DirectConnect, allowed_target
@@ -17,7 +18,10 @@ logger = logging.getLogger(__name__)
 
 
 async def fetch_application_icon(
-    service: EditorSessionService, device_id: UUID, package_name: str,
+    service: EditorSessionService,
+    device_id: UUID,
+    package_name: str,
+    hub: AndroidEditorHub | None = None,
 ) -> bytes | None:
     """A failed optional probe leaves script creation and existing icons intact."""
     try:
@@ -28,12 +32,28 @@ async def fetch_application_icon(
         if current.device_id != device_id or current.status is not EditorStatus.ACTIVE:
             return None
         target = connection.get("app_icon_ws_url") if connection else None
+        if connection and connection.get("transport") == "android-reverse-v1" and hub:
+            payload = await hub.request(
+                current.session_id,
+                "app_icon",
+                current.terminal_id,
+                current.device_id,
+                current.terminal_instance_id,
+                package_name.encode("ascii"),
+            )
+            return normalize_icon(payload)
         if not target or not allowed_target(target):
             return None
         context = ssl.create_default_context(cafile=os.environ["AL1S_EDITOR_RELAY_CA_FILE"])
         async with DirectConnect(
-            target, ssl=context, proxy=None, open_timeout=8, close_timeout=2,
-            max_size=MAX_UPLOAD_BYTES, max_queue=1, compression=None,
+            target,
+            ssl=context,
+            proxy=None,
+            open_timeout=8,
+            close_timeout=2,
+            max_size=MAX_UPLOAD_BYTES,
+            max_queue=1,
+            compression=None,
         ) as upstream:
             await asyncio.wait_for(upstream.send(package_name.encode("ascii")), 3)
             payload = await asyncio.wait_for(upstream.recv(), 20)

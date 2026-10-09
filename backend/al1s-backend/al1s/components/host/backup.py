@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
-from al1s.components.host.compose_driver import SERVICES, ComposeDeployment
+from al1s.components.host.compose_driver import ComposeDeployment
 from al1s.components.host.contracts import JsonObject
 
 ARCHIVE_PROGRAM = (
@@ -72,7 +72,7 @@ def backup_data(
         result["database.dump"] = checksum(destination)
     if component in {"s3", "mqtt"}:
         sources = {}
-        for service in SERVICES[component]:
+        for service in deployment.services(component):
             for mount in deployment.inspect(service)["Mounts"]:
                 if mount.get("RW") and mount["Type"] in {"volume", "bind"}:
                     source = mount.get("Name") if mount["Type"] == "volume" else mount["Source"]

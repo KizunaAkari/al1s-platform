@@ -33,6 +33,10 @@ def compatible_release(
     current: ComponentInventoryEntry, release: ComponentReleaseInput
 ) -> list[str]:
     reasons = []
+    if release.component == "s3":
+        bundled = release.candidate_image.split(":", 1)[0] == "al1s-platform-storage"
+        if bundled != (current.storage_layout == "bundle"):
+            reasons.append("component_storage_layout_mismatch")
     if current.upgrade_unit != release.component:
         reasons.append("component_mismatch")
     if current.status != "healthy" or not current.source_identity:
@@ -136,7 +140,11 @@ class ComponentUpgradeService:
             target_version=release.native_version,
             allowed=not reasons,
             reasons=reasons,
-            affected_services=SERVICES[release.component],
+            affected_services=(
+                ["backend", "storage"]
+                if release.component == "s3" and current.storage_layout == "bundle"
+                else SERVICES[release.component]
+            ),
             backup_required=release.component != "linux-terminal",
         )
 

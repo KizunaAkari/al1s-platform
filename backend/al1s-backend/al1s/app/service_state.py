@@ -4,7 +4,8 @@ import asyncio
 from dataclasses import dataclass
 from typing import cast
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
+from starlette.requests import HTTPConnection
 
 from al1s.app.config import Settings
 from al1s.app.modules import ModuleRegistry
@@ -12,9 +13,14 @@ from al1s.appearance.service import AppearanceService
 from al1s.bots.gateway_probe import GatewayProbe
 from al1s.bots.runtime_status import BotRuntimeService
 from al1s.bots.service import BotService
+from al1s.components.inventory import ComponentInventoryService
+from al1s.components.operations import ComponentUpgradeService
+from al1s.components.releases import ComponentReleaseService
+from al1s.execution.android_editor_transport import AndroidEditorHub
 from al1s.execution.artifact_upload_service import ArtifactUploadService
 from al1s.execution.blob_transfer import TerminalBlobTransferService
 from al1s.execution.delivery_service import TerminalDeliveryService
+from al1s.execution.device_path_service import DevicePathService
 from al1s.execution.editor_service import EditorSessionService
 from al1s.execution.failure_review_service import FailureReviewService
 from al1s.execution.maintenance_service import MaintenanceService
@@ -22,6 +28,7 @@ from al1s.execution.mqtt_sessions import TerminalMqttSessionService
 from al1s.execution.recording_download import RecordingDownloadService
 from al1s.execution.scheduling_service import ExecutionSchedulingService
 from al1s.execution.services import ExecutionResourceService
+from al1s.execution.terminal_setup_checks import TerminalSetupCheckService
 from al1s.infrastructure.readiness import ReadinessService
 from al1s.kernel.maintenance import KernelMaintenanceService
 from al1s.kernel.storage_gc import StorageGcService
@@ -44,10 +51,8 @@ from al1s.notifications.lexicon_service import LexiconService
 from al1s.notifications.query_service import NotificationQueryService
 from al1s.notifications.review_service import ReviewService
 from al1s.notifications.service import NotificationService
+from al1s.meme_workshop.transport import MemeBackendClient
 from al1s.releases.service import ReleaseService
-from al1s.components.inventory import ComponentInventoryService
-from al1s.components.releases import ComponentReleaseService
-from al1s.components.operations import ComponentUpgradeService
 
 
 @dataclass(init=False, slots=True)
@@ -65,10 +70,14 @@ class PlatformServiceState:
     reviews: ReviewService
     gateway_probe: GatewayProbe
     editor_sessions: EditorSessionService
+    android_editor_hub: AndroidEditorHub
+    device_paths: DevicePathService
+    terminal_setup_checks: TerminalSetupCheckService
     notification_commands: NotificationService
     notification_queries: NotificationQueryService
     bot_service: BotService
     bot_runtime: BotRuntimeService
+    meme_backend: MemeBackendClient
     execution_resources: ExecutionResourceService
     terminal_mqtt_sessions: TerminalMqttSessionService
     maa_publication: MaaScriptPublicationService
@@ -100,7 +109,7 @@ class PlatformServiceState:
     terminal_delivery: TerminalDeliveryService
 
 
-def service_state(request: Request) -> PlatformServiceState:
+def service_state(request: HTTPConnection) -> PlatformServiceState:
     services = getattr(request.app.state, "services", None)
     if isinstance(services, PlatformServiceState):
         return services

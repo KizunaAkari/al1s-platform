@@ -11,7 +11,11 @@ REPOSITORIES: dict[str, tuple[str, ...]] = {
     "platform": ("al1s-platform",),
     "linux-terminal": ("al1s-terminal", "al1s-terminal-next"),
     "postgresql": ("postgres", "m.daocloud.io/docker.io/library/postgres"),
-    "s3": ("chrislusf/seaweedfs", "m.daocloud.io/docker.io/chrislusf/seaweedfs"),
+    "s3": (
+        "chrislusf/seaweedfs",
+        "m.daocloud.io/docker.io/chrislusf/seaweedfs",
+        "al1s-platform-storage",
+    ),
     "mqtt": ("eclipse-mosquitto", "m.daocloud.io/docker.io/library/eclipse-mosquitto"),
 }
 
@@ -47,6 +51,7 @@ class ComponentInventoryEntry(Contract):
     image: str | None = None
     image_id: str | None = None
     source_identity: str | None = None
+    storage_layout: Literal["legacy", "bundle"] | None = None
     reason: str | None = None
 
 

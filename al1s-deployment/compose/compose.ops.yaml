@@ -1,0 +1,53 @@
+services:
+  ops:
+    container_name: al1s-platform-ops
+    image: ${AL1S_OPS_IMAGE:?set verified combined ops image}
+    group_add: ["${AL1S_DOCKER_SOCKET_GID}"]
+    environment:
+      AL1S_COMPONENT_CONFIG: ${AL1S_COMPONENT_CONFIG}
+      AL1S_COMPONENT_DEPLOYMENT_SOURCE: ${AL1S_COMPONENT_ROOT}
+      AL1S_HOST_MANAGER_CA_DIR: ${AL1S_COMPONENT_ROOT}/packages/linux/host-manager-public
+      AL1S_BOT_CONTROL_TOKEN: ${AL1S_BOT_CONTROL_TOKEN}
+      AL1S_CONTROL_QQ_CONTAINER: ${AL1S_CONTROL_QQ_CONTAINER:-al1s-llbot}
+      AL1S_CONTROL_DISCORD_CONTAINER: ${AL1S_CONTROL_DISCORD_CONTAINER:-al1s-discord-worker}
+      AL1S_CONTROL_DOCKER_VERSION: ${AL1S_CONTROL_DOCKER_VERSION:-1.45}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - type: bind
+        source: ${AL1S_COMPONENT_DEPLOYMENT_SOURCE}
+        target: ${AL1S_COMPONENT_ROOT}
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      control:
+        aliases: [component-maintenance, bot-control, al1s-platform-component-maintenance, al1s-platform-bot-control]
+    restart: unless-stopped
+    stop_grace_period: 390s
+    logging:
+      driver: syslog
+      options:
+        syslog-address: udp://host.docker.internal:15144
+        syslog-format: rfc5424micro
+        tag: "al1s/{{.Name}}"
+        cache-disabled: "true"
+  component-maintenance:
+    profiles: [legacy-ops]
+  bot-control:
+    profiles: [legacy-ops]
+  migrate:
+    profiles: [tools]
+  s3-init:
+    profiles: [tools]
+  execution-test:
+    profiles: [tests]
+  execution-test-db-init:
+    profiles: [tests]
+  backend:
+    depends_on: !override
+      postgres: {condition: service_healthy}
+      mosquitto: {condition: service_healthy}
+      seaweed-s3: {condition: service_started}

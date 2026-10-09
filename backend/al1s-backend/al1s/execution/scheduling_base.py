@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from al1s.execution.definitions import ExecutionDefinitionRegistry
+from al1s.execution.device_path_service import DevicePathService
 from al1s.execution.errors import ConflictError, InvalidRequestError, NotFoundError
 from al1s.execution.package_builder import create_delivery_records
 from al1s.execution.schedule_revision_service import ScheduleRevisionService
@@ -37,9 +38,11 @@ class SchedulingContext:
         definitions: ExecutionDefinitionRegistry,
         *,
         now: Callable[[], datetime] | None = None,
+        device_paths: DevicePathService | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._definitions = definitions
+        self._device_paths = device_paths
         self._now = now or (lambda: datetime.now(UTC))
         self._task_lifecycle = TaskLifecycleOperations(uow_factory, self._now)
         self._schedule_revisions = ScheduleRevisionService(uow_factory, self._now)
