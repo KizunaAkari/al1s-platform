@@ -84,8 +84,10 @@ def unbind_application_device(
 
 @router.get("/editor/foreground")
 async def editor_foreground(device_id: UUID, request: Request) -> dict[str, str]:
-    package = await probe_foreground_package(service_state(request).editor_sessions, device_id,
-                                             getattr(service_state(request), "android_editor_hub", None))
+    package = await probe_foreground_package(
+        service_state(request).editor_sessions, device_id,
+        getattr(service_state(request), "android_editor_hub", None),
+    )
     return {"package_name": package}
 
 
@@ -96,8 +98,10 @@ async def create_editor_script(
     response: Response,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
 ) -> EditorScriptCreatedResponse:
-    package = await probe_foreground_package(service_state(request).editor_sessions, body.device_id,
-                                             getattr(service_state(request), "android_editor_hub", None))
+    package = await probe_foreground_package(
+        service_state(request).editor_sessions, body.device_id,
+        getattr(service_state(request), "android_editor_hub", None),
+    )
     creator = service_state(request).maa_editor_creation
     from starlette.concurrency import run_in_threadpool
 

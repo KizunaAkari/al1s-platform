@@ -915,7 +915,24 @@ def _validate_global_popups(value: Any, step_count: int, issues: list[Validation
                     pointer,
                 )
             )
-        if "template_base64" not in rule:
+        recognition = rule.get("recognition_mode", "image")
+        if recognition not in ("image", "text"):
+            issues.append(
+                ValidationIssue(
+                    "invalid_independent_rule_recognition",
+                    "Independent rule recognition must be image or text",
+                    f"{pointer}/recognition_mode",
+                )
+            )
+        elif recognition == "text" and not _non_empty_string(rule.get("text"), 200):
+            issues.append(
+                ValidationIssue(
+                    "invalid_independent_rule_text",
+                    "Independent rule OCR text must contain 1 to 200 characters",
+                    f"{pointer}/text",
+                )
+            )
+        elif recognition == "image" and "template_base64" not in rule:
             issues.append(
                 ValidationIssue(
                     "independent_rule_template_missing",

@@ -23,7 +23,8 @@ async function main(): Promise<void> {
     config, deduplicator, health, logger, message => provider.submitMessage!(message),
   );
   let stopIngress: (() => void) | undefined;
-  const healthServer = new HealthServer(config.health.host, config.health.port, health, logger);
+  const healthServer = new HealthServer(config.health.host, config.health.port, health, logger,
+    () => provider.runtimeIdentity?.() ?? null);
   const runtime: RuntimeServices = { bridge, health, logger };
   setRuntime(runtime);
   let memeSender: { close(): void } | undefined;
@@ -137,6 +138,7 @@ async function main(): Promise<void> {
       runtime.memes = new MemeCommandService({
         request: (path, init) => provider.memeRequest!(path, init),
         send: sender.send,
+        avatarURL: sender.avatarURL,
         media: (url, signal) => readMemeMedia(url, signal, proxy.rest?.agent),
         report: code => logger.warn(code),
       });

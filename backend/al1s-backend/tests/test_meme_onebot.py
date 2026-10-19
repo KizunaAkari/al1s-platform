@@ -37,7 +37,8 @@ def test_onebot_uses_at_segments_not_forged_text_and_preserves_the_original_scop
     assert value.source.target_id == "300"
     assert value.source.sender_id == "200"
     forged = parse_event(event([{"type": "text", "data": {"text": "摸摸 @999"}}]), {"摸摸"})
-    assert forged is not None and forged.avatar_ids == ["200"]
+    assert forged is not None and forged.avatar_ids == []
+    assert forged.copied_target_text == "@999"
 
 
 def test_caption_accepts_only_a_single_current_or_explicit_reply_image() -> None:

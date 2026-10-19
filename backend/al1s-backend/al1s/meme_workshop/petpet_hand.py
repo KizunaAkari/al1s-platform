@@ -35,7 +35,7 @@ def petpet_frames(
         left, top = int(14 + x * 0.5), int(20 + y * 1.125)
         w, h = int((112 + width * 1.25) * 0.875), int((112 + height * 1.25) * 0.875)
         slot = AvatarSlot(width=max(1, round(w * scale)), height=max(1, round(h * scale)))
-        frame = Image.new("RGBA", (size, size), layout.background_color)
+        frame = Image.new("RGBA", (size, size))
         frame.alpha_composite(
             render_avatar(avatar, slot), (round(left * scale), round(top * scale))
         )
@@ -44,5 +44,5 @@ def petpet_frames(
         frame.alpha_composite(
             hand.resize((size, size), Image.Resampling.LANCZOS), (0, round(hand_y * scale))
         )
-        frames.append(frame.convert("RGB"))
+        frames.append(frame)
     return frames

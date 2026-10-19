@@ -65,8 +65,8 @@ async def test_ocr(session_id: UUID, request: Request) -> dict[str, object]:
             compression=None,
         ) as upstream:
             await asyncio.wait_for(upstream.send(bytes(body)), 5)
-            payload = await asyncio.wait_for(upstream.recv(), 30)
-        result = json.loads(payload)
+            received = await asyncio.wait_for(upstream.recv(), 30)
+        result = json.loads(received)
         if not isinstance(result, dict) or not isinstance(result.get("texts"), list):
             raise ValueError("Invalid OCR result")
         return {"texts": [str(text)[:1000] for text in result["texts"][:200]]}

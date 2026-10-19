@@ -51,12 +51,15 @@ def details(
     request: Request,
     response: Response,
     cursor: UUID | None = None,
+    execution_id: UUID | None = None,
     authorization: str | None = Header(default=None),
 ) -> TaskDetailsResponse:
     response.headers["Cache-Control"] = "no-store"
-    return TaskDetailsResponse.model_validate(
-        _service(request, authorization).details(task_id, cursor)
+    service = _service(request, authorization)
+    result = service.details(task_id, cursor) if execution_id is None else service.details(
+        task_id, cursor, execution_id=execution_id
     )
+    return TaskDetailsResponse.model_validate(result)
 
 
 @router.get("/{task_id}/attempts/{attempt_id}/screenshots/{artifact_id}")

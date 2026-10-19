@@ -39,7 +39,10 @@ services:
     image: ${AL1S_PLATFORM_IMAGE:?set verified platform image}
     environment:
       AL1S_MEME_BACKEND_URL: ${AL1S_MEME_BACKEND_URL:-}
+      AL1S_MEME_QQ_BACKEND_URL: ${AL1S_MEME_QQ_BACKEND_URL:-}
       AL1S_MEME_BACKEND_TOKEN: ${AL1S_MEME_BACKEND_TOKEN:-}
+      AL1S_QQ_RUNTIME_ARTIFACT_DIGEST: ${AL1S_QQ_RUNTIME_ARTIFACT_DIGEST:-}
+      AL1S_QQ_RUNTIME_VERSION: ${AL1S_QQ_RUNTIME_VERSION:-}
       # Explicit browser origins behind TLS; never trust arbitrary forwarded origins.
       AL1S_CORS_ORIGINS: ${AL1S_BROWSER_ORIGINS:-https://yukari.local:8443,https://127.0.0.1:8443,https://localhost:8443}
       AL1S_EDITOR_RELAY_ORIGINS: ${AL1S_EDITOR_RELAY_ORIGINS:-}

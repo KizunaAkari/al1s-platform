@@ -81,6 +81,11 @@ class MaaRegisteredActionCompiler:
             "/global_popups",
             pointer_keys,
         )
+        if any(
+            rule.get("enabled") is not False and rule.get("recognition_mode") == "text"
+            for rule in popups
+        ):
+            providers.add("ocr")
         definition = {
             "schema_version": 1,
             "compiler_version": COMPILER_VERSION,

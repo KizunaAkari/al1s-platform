@@ -3,13 +3,14 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from typing import cast
 from uuid import UUID
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.concurrency import run_in_threadpool
 
 from al1s.api.terminal_auth import authenticated_terminal_id
-from al1s.app.admin_auth import COOKIE
+from al1s.app.admin_auth import COOKIE, AdminSessions
 from al1s.app.service_state import service_state
 from al1s.execution.android_editor_transport import AndroidEditorChannel
 from al1s.execution.editor_sessions import EditorStatus
@@ -88,7 +89,9 @@ async def serve_browser(socket: WebSocket, session_id: UUID, channel: str) -> No
         await item.to_terminal.put(b"open")
 
         async def check() -> bool:
-            return socket.app.state.admin_sessions.valid(socket.cookies.get(COOKIE, ""))
+            return cast(AdminSessions, socket.app.state.admin_sessions).valid(
+                socket.cookies.get(COOKIE, "")
+            )
 
         await relay(socket, item, browser=True, channel=channel, check_authority=check)
     except (ExecutionDomainError, ValueError, TimeoutError, WebSocketDisconnect):

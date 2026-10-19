@@ -11,6 +11,15 @@ const rule = (trigger: ForwardRule["trigger"]): ForwardRule => ({
 });
 
 describe("Discord forwarding trigger windows", () => {
+  it("reads Unicode leading code points without including the rest of long messages", () => {
+    const matcher = new ForwardRuleMatcher(() => 0);
+    const target = rule({ kind: "acrostic", text: "😀命" });
+    expect(matcher.match(target, message(1, "\u3000\n😀" + "正文".repeat(1000), 0))).toBeNull();
+    expect(matcher.match(target, message(2, " \t ", 0))).toBeNull();
+    expect(matcher.match(target, message(3, "\t命令", 0))?.messages.map(item => item.id))
+      .toEqual(["1", "3"]);
+  });
+
   it("matches configured text in the original message", () => {
     const matcher = new ForwardRuleMatcher();
     const target = rule({ kind: "contains", text: "报警" });

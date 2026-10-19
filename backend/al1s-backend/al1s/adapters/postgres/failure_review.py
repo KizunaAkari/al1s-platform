@@ -66,6 +66,8 @@ class PostgresFailureReview:
         task_id: UUID,
         cursor: UUID | None,
         now: datetime,
+        *,
+        execution_id: UUID | None = None,
     ) -> dict[str, Any]:
         query = (
             select(Attempt, Lineup.id, Task.source_module, Snapshot.manifest)
@@ -78,6 +80,8 @@ class PostgresFailureReview:
             .order_by(Attempt.id)
             .limit(21)
         )
+        if execution_id is not None:
+            query = query.where(Execution.id == execution_id)
         if cursor:
             query = query.where(Attempt.id > cursor)
         with self._sessions() as session:

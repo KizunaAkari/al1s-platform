@@ -33,8 +33,11 @@ def post_json_direct(
     *,
     auth_scheme: str = "Bearer",
     timeout_seconds: float = 20,
+    max_response_bytes: int = 65_536,
 ) -> object:
     """Post once without ambient proxies or redirects; never expose response text."""
+    if not 1 <= max_response_bytes <= 8 * 1024 * 1024:
+        raise ValueError("invalid_response_limit")
     headers = {"Content-Type": "application/json", "User-Agent": "AL1S/0.1"}
     if token:
         headers["Authorization"] = f"{auth_scheme} {token}"
@@ -43,8 +46,8 @@ def post_json_direct(
         with build_opener(ProxyHandler({}), NoRedirect()).open(
             request, timeout=timeout_seconds
         ) as response:
-            raw = response.read(65_537)
-        if len(raw) > 65_536:
+            raw = response.read(max_response_bytes + 1)
+        if len(raw) > max_response_bytes:
             raise DirectHttpError("response_too_large", False)
         return json.loads(raw)
     except HTTPError as exc:

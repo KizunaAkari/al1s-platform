@@ -14,8 +14,8 @@ from al1s.app.meme_services import meme_services
 from al1s.bots.ports import BotUnitOfWork
 from al1s.bots.service import BotService
 from al1s.infrastructure.database import create_database_engine, create_session_factory
-from al1s.meme_workshop.qq_worker import QqWorker
 from al1s.meme_workshop.runtime import create_runtime_app
+from al1s.meme_workshop.runtime_roles import RuntimeRole, make_qq_worker, render_limit
 from al1s.secrets.security import FernetSecretCipher
 
 
@@ -30,6 +30,7 @@ class RuntimeSettings(BaseSettings):
     s3_bucket: str = "al1s-platform"
     s3_access_key: str
     s3_secret_key: SecretStr
+    role: RuntimeRole = "combined"
 
     @field_validator("backend_token", "master_key")
     @classmethod
@@ -66,9 +67,14 @@ def run() -> None:
         bots = BotService(
             lambda: cast(BotUnitOfWork, BotSqlAlchemyUnitOfWork(sessions)), cipher, cipher
         )
-        workshop = meme_services(sessions, objects)
+        workshop = meme_services(sessions, objects, render_limit=render_limit(runtime.role))
         app = create_runtime_app(
-            workshop, bots, runtime.backend_token.get_secret_value(), QqWorker(workshop, cipher)
+            workshop,
+            bots,
+            runtime.backend_token.get_secret_value(),
+            (None if os.environ.get("AL1S_QQ_IDENTITY_BLOCKED") == "1"
+             else make_qq_worker(runtime.role, workshop, cipher)),
+            role=runtime.role,
         )
         uvicorn.run(
             app,

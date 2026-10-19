@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import type { WorkerIdentity } from "./health/state.js";
 import { chmod, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -61,6 +62,11 @@ export interface PlatformProviderOptions {
 }
 
 export class PlatformConfigProvider implements ConfigProvider {
+  public runtimeIdentity(): WorkerIdentity | null {
+    if (!this.credential || !this.active) return null;
+    return { credential_sha256: createHash("sha256").update(this.credential).digest("hex"),
+      service_id: this.active.service_id };
+  }
   private readonly baseUrl: string;
   private readonly lastKnownGoodPath: string;
   private readonly pollIntervalMs: number;

@@ -1,6 +1,7 @@
 export class MessageDeduplicator {
   private readonly inFlight = new Set<string>();
   private readonly completed = new Map<string, number>();
+  private nextExpiry = Infinity;
 
   public constructor(
     private readonly ttlMs: number,
@@ -18,7 +19,9 @@ export class MessageDeduplicator {
 
   public complete(messageId: string): void {
     this.inFlight.delete(messageId);
-    this.completed.set(messageId, this.now() + this.ttlMs);
+    const expiresAt = this.now() + this.ttlMs;
+    this.completed.set(messageId, expiresAt);
+    this.nextExpiry = Math.min(this.nextExpiry, expiresAt);
   }
 
   public fail(messageId: string): void {
@@ -27,9 +30,13 @@ export class MessageDeduplicator {
 
   private removeExpired(): void {
     const current = this.now();
+    if (current < this.nextExpiry) return;
+    this.nextExpiry = Infinity;
     for (const [messageId, expiresAt] of this.completed) {
       if (expiresAt <= current) {
         this.completed.delete(messageId);
+      } else {
+        this.nextExpiry = Math.min(this.nextExpiry, expiresAt);
       }
     }
   }

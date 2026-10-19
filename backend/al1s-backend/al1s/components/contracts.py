@@ -4,8 +4,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-UpgradeUnit = Literal["platform", "postgresql", "s3", "mqtt", "linux-terminal"]
-ComponentKey = Literal["platform", "postgresql", "s3", "mqtt", "linux-terminal", "maa"]
+from al1s.bots.qq_identity.contracts import QqIdentitySummary
+
+UpgradeUnit = Literal[
+    "platform", "postgresql", "s3", "mqtt", "linux-terminal", "qq-bot", "discord-bot"
+]
+ComponentKey = Literal[
+    "platform", "postgresql", "s3", "mqtt", "linux-terminal", "maa", "qq-bot", "discord-bot"
+]
 MAX_PACKAGE_BYTES = 5 * 1024**3
 REPOSITORIES: dict[str, tuple[str, ...]] = {
     "platform": ("al1s-platform",),
@@ -17,6 +23,8 @@ REPOSITORIES: dict[str, tuple[str, ...]] = {
         "al1s-platform-storage",
     ),
     "mqtt": ("eclipse-mosquitto", "m.daocloud.io/docker.io/library/eclipse-mosquitto"),
+    "qq-bot": ("al1s-plachta",),
+    "discord-bot": ("al1s-plachta",),
 }
 
 
@@ -25,17 +33,22 @@ class Contract(BaseModel):
 
 
 class ComponentTarget(Contract):
-    kind: Literal["platform", "terminal"]
+    kind: Literal["platform", "terminal", "bot"]
     terminal_id: UUID | None = None
+    bot_alias: Literal["qq", "discord"] | None = None
 
     @model_validator(mode="after")
     def bound_target(self) -> Self:
         if (self.kind == "terminal") != (self.terminal_id is not None):
             raise ValueError("terminal target requires a UUID; platform target has no terminal ID")
+        if (self.kind == "bot") != (self.bot_alias is not None):
+            raise ValueError("bot target requires its fixed alias")
         return self
 
     @property
     def scope(self) -> str:
+        if self.kind == "bot":
+            return f"bot:{self.bot_alias}"
         return "platform" if self.kind == "platform" else f"terminal:{self.terminal_id}"
 
 
@@ -53,6 +66,11 @@ class ComponentInventoryEntry(Contract):
     source_identity: str | None = None
     storage_layout: Literal["legacy", "bundle"] | None = None
     reason: str | None = None
+    runtime_version: str | None = None
+    qq_identity: QqIdentitySummary | None = None
+    qq_protocol_mode: Literal["direct", "pmhq"] = "direct"
+    qq_client_version: str | None = Field(default=None, max_length=64)
+    pmhq_version: str | None = Field(default=None, max_length=64)
 
 
 class InventoryPage(Contract):
@@ -65,21 +83,64 @@ class ComponentReleaseInput(Contract):
     component: UpgradeUnit
     version: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
     architecture: Literal["amd64", "arm64"]
-    size_bytes: int = Field(gt=0, le=MAX_PACKAGE_BYTES)
-    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    candidate_image: str = Field(max_length=256)
-    expected_image_id: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    size_bytes: int | None = Field(default=None, gt=0, le=MAX_PACKAGE_BYTES)
+    sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    candidate_image: str | None = Field(default=None, max_length=256)
+    expected_image_id: str | None = Field(default=None, pattern=r"^sha256:[a-f0-9]{64}$")
     native_version: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
     compatible_from: str = Field(min_length=1, max_length=128)
     data_policy: Literal["same-format", "alembic"] = "same-format"
     schema_from: str | None = Field(default=None, max_length=64)
     schema_to: str | None = Field(default=None, max_length=64)
     maa_version: str | None = Field(default=None, max_length=64)
+    source_kind: Literal["archive", "registry"] = "archive"
+    registry_digest: str | None = Field(default=None, pattern=r"^sha256:[a-f0-9]{64}$")
+    platform_manifest_digest: str | None = Field(default=None, pattern=r"^sha256:[a-f0-9]{64}$")
+    runtime_artifact_digest: str | None = Field(default=None, pattern=r"^sha256:[a-f0-9]{64}$")
+    runtime_version: str | None = Field(default=None, max_length=64)
+    source_url: str | None = Field(
+        default=None,
+        max_length=256,
+        pattern=r"^https://github\.com/LLOneBot/LuckyLilliaBot/releases/tag/v8\.[0-9]{1,4}\.[0-9]{1,4}$",
+    )
+    source_published_at: datetime | None = None
+    source_notes: str | None = Field(default=None, max_length=4000)
 
     @model_validator(mode="after")
     def bound_package(self) -> Self:
         import re
 
+        if self.source_kind == "registry":
+            if self.component != "qq-bot" or not all(
+                (
+                    self.registry_digest,
+                    self.platform_manifest_digest,
+                    self.runtime_artifact_digest,
+                    self.runtime_version,
+                )
+            ):
+                raise ValueError("registry candidates require the fixed QQ source and runtime")
+            if (
+                self.size_bytes is not None
+                or self.sha256 is not None
+                or self.data_policy != "same-format"
+                or self.schema_from is not None
+                or self.schema_to is not None
+                or self.maa_version is not None
+                or getattr(self, "blob_id", None) is not None
+            ):
+                raise ValueError("registry source has no archive or database migration")
+            if (self.candidate_image is None) != (self.expected_image_id is None):
+                raise ValueError("registry image identity must be complete")
+            if getattr(self, "state", None) == "published" and not (
+                self.candidate_image and self.expected_image_id
+            ):
+                raise ValueError("published QQ candidate requires its complete image")
+            if self.candidate_image is None:
+                return self
+        elif not all((self.size_bytes, self.sha256, self.candidate_image, self.expected_image_id)):
+            raise ValueError("archive source requires complete package identity")
+        assert self.candidate_image is not None
         repository, separator, tag = self.candidate_image.rpartition(":")
         if self.component == "linux-terminal" and self.architecture != "arm64":
             raise ValueError("the existing Linux upgrade driver supports ARM64 releases")
@@ -137,6 +198,15 @@ class ComponentUpgradeRequest(Contract):
     release_id: UUID
     expected_source: str = Field(pattern=r"^[a-f0-9]{64}$")
     idempotency_key: str = Field(min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def match_bot(self) -> Self:
+        if self.component in {"qq-bot", "discord-bot"}:
+            if self.target.kind != "bot" or self.component != f"{self.target.bot_alias}-bot":
+                raise ValueError("bot component and target mismatch")
+        elif self.target.kind == "bot":
+            raise ValueError("bot target is only for bot components")
+        return self
 
 
 class ComponentOperation(Contract):

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -329,6 +329,8 @@ describe("PlatformConfigProvider", () => {
     const config = await provider.load();
     expect(config.discord.applicationId).toBe("1439231483326894160");
     await expect(readFile(join(directory, "last-known-good.json"), "utf8")).rejects.toThrow();
+    expect(provider.runtimeIdentity()).toEqual({ service_id: candidate.service_id,
+      credential_sha256: createHash("sha256").update("worker-id.worker-secret").digest("hex") });
 
     await provider.markApplied();
     const persisted = await readFile(join(directory, "last-known-good.json"), "utf8");

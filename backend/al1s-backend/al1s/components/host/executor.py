@@ -32,7 +32,7 @@ class HostComponentExecutor:
         return {key: record[key] for key in PUBLIC_FIELDS if key in record}
 
     def reserve(self, identity: UUID, payload: JsonObject) -> JsonObject:
-        with self.reservation_lock:
+        with self.reservation_lock, self.journal.exclusive(self.journal.scope(payload)):
             return self._reserve(identity, payload)
 
     def _reserve(self, identity: UUID, payload: JsonObject) -> JsonObject:
@@ -40,6 +40,10 @@ class HostComponentExecutor:
         self.check_identity(previous, payload)
         if previous is not None:
             return self.status(identity)
+        owner = self.journal.scope_record(self.journal.scope(payload))
+        if owner and owner.get("operation_id") == str(identity):
+            return self.status(identity)
+        self.journal.assert_available(self.journal.scope(payload), identity)
         record = {
             "operation_id": str(identity),
             "state": "accepted",
@@ -64,10 +68,22 @@ class HostComponentExecutor:
         if record["state"] not in FINAL and record.get("executor_instance") != self.instance:
             record.update(state="unknown", stage="executor_interrupted", proof=False)
             self.journal.save(identity, record)
+        elif record["state"] in FINAL:
+            owner = self.journal.scope_record(self.journal.scope(record.get("payload", {})))
+            if (
+                owner
+                and owner.get("operation_id") == str(identity)
+                and owner.get("state") != record["state"]
+            ):
+                self.journal.save(identity, record)
         return self.public(record)
 
     def execute(self, identity: UUID, payload: JsonObject) -> JsonObject:
         previous = self.journal.load(identity)
+        if previous is None:
+            owner = self.journal.scope_record(self.journal.scope(payload))
+            if owner and owner.get("operation_id") == str(identity):
+                return self.status(identity)
         self.check_identity(previous, payload)
         if previous is not None and not (
             previous["state"] == "accepted" and previous.get("executor_instance") == self.instance
@@ -75,7 +91,7 @@ class HostComponentExecutor:
             return self.status(
                 identity
             )  # Never repeat a physical operation merely because POST repeated.
-        with self.journal.exclusive():
+        with self.journal.exclusive(self.journal.scope(payload)):
             previous = self.journal.load(identity)
             self.check_identity(previous, payload)
             if previous is not None and not (
@@ -83,6 +99,7 @@ class HostComponentExecutor:
                 and previous.get("executor_instance") == self.instance
             ):
                 return self.status(identity)
+            self.journal.assert_available(self.journal.scope(payload), identity)
             record = {
                 "operation_id": str(identity),
                 "state": "preparing",
@@ -138,7 +155,8 @@ class HostComponentExecutor:
         return self.public(record)
 
     def reconcile(self, identity: UUID) -> JsonObject:
-        with self.journal.exclusive():
+        prior = self.journal.load(identity)
+        with self.journal.exclusive(self.journal.scope(prior.get("payload", {}) if prior else {})):
             record = self.journal.load(identity)
             if record is None:
                 # A persisted tombstone fences delayed POSTs for an unreceived operation.

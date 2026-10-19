@@ -52,6 +52,12 @@ class ComponentReleaseRepository:
             if row.state == "verifying":
                 self._fail(session, row, "component_verification_interrupted", now)
                 return None
+            if row.source_kind == "registry":
+                row.state, row.lease_until = "verifying", now + timedelta(minutes=30)
+                row.row_version += 1
+                session.flush()
+                return ComponentVerificationJob(release_record(row), None, None)
+            assert row.sha256 is not None and row.size_bytes is not None
             identity = uuid4()
             key = f"component-releases/{row.id}/{identity}"
             PostgresBlobCatalogRepository(session).add_pending(
@@ -77,6 +83,11 @@ class ComponentReleaseRepository:
             if error or row.lease_until is None or row.lease_until <= now:
                 self._fail(session, row, error or "component_verification_timeout", now)
                 return False
+            if row.source_kind == "registry":
+                self._fail(session, row, "registry_candidate_proof_required", now)
+                return False
+            assert row.sha256 is not None and row.size_bytes is not None
+            assert job.candidate_blob_id is not None
             if row.component == "linux-terminal":
                 collision = session.scalar(
                     select(LinuxReleaseRow.id).where(
@@ -150,18 +161,35 @@ class ComponentReleaseRepository:
         self, identity: UUID, internal: bool = False
     ) -> tuple[ComponentRelease, str]:
         with self.sessions() as session:
-            row = session.get(Row, identity)
-            if row is None:
-                raise NotFoundError("component_release")
-            if row.state != "published" and not (internal and row.state == "verifying"):
-                raise ConflictError("component_version_unpublished", "Version is not published")
-            if row.state == "verifying" and (
-                row.lease_until is None or row.lease_until <= datetime.now(UTC)
-            ):
-                raise ConflictError("component_verification_expired", "Verification lease expired")
-            if row.blob_id is None:
-                raise ConflictError("component_version_missing", "Version blob is unavailable")
-            blob = session.get(BlobObjectRow, row.blob_id)
-            if blob is None or (blob.status != "ready" and not internal):
-                raise ConflictError("component_version_unavailable", "Version object is not ready")
+            row = self._available_release(session, identity, internal)
+            blob = self._available_blob(session, row, internal)
             return release_record(row), blob.object_key
+
+    def host_manifest(self, identity: UUID) -> ComponentRelease:
+        with self.sessions() as session:
+            row = self._available_release(session, identity, True)
+            if row.source_kind == "archive":
+                self._available_blob(session, row, True)
+            return release_record(row)
+
+    @staticmethod
+    def _available_release(session: Session, identity: UUID, internal: bool) -> Row:
+        row = session.get(Row, identity)
+        if row is None:
+            raise NotFoundError("component_release")
+        if row.state != "published" and not (internal and row.state == "verifying"):
+            raise ConflictError("component_version_unpublished", "Version is not published")
+        if row.state == "verifying" and (
+            row.lease_until is None or row.lease_until <= datetime.now(UTC)
+        ):
+            raise ConflictError("component_verification_expired", "Verification lease expired")
+        return row
+
+    @staticmethod
+    def _available_blob(session: Session, row: Row, internal: bool) -> BlobObjectRow:
+        if row.blob_id is None:
+            raise ConflictError("component_version_missing", "Version blob is unavailable")
+        blob = session.get(BlobObjectRow, row.blob_id)
+        if blob is None or (blob.status != "ready" and not internal):
+            raise ConflictError("component_version_unavailable", "Version object is not ready")
+        return blob

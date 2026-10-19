@@ -1,0 +1,23 @@
+ARG RUNTIME_ARTIFACT
+ARG LLBOT_BASE_IMAGE
+FROM ${RUNTIME_ARTIFACT} AS meme-runtime
+FROM ${LLBOT_BASE_IMAGE} AS native-source
+FROM native-source
+RUN apk add --no-cache libffi libstdc++ ca-certificates
+COPY --from=meme-runtime /usr/local/bin/python* /usr/local/bin/
+COPY --from=meme-runtime /usr/local/bin/supervisord /usr/local/bin/supervisorctl /usr/local/bin/
+COPY --from=meme-runtime /usr/local/lib/python3.12 /usr/local/lib/python3.12
+COPY --from=meme-runtime /usr/local/lib/libpython* /usr/local/lib/
+COPY --from=native-source /usr/local/bin/node /tmp/al1s-vendor-node
+RUN cmp /usr/local/bin/node /tmp/al1s-vendor-node && rm /tmp/al1s-vendor-node
+COPY --from=meme-runtime /opt/al1s /opt/al1s
+COPY --from=meme-runtime /etc/al1s-qq-supervisord.conf /etc/al1s-qq-supervisord.conf
+ARG NATIVE_VERSION
+ARG RUNTIME_VERSION
+RUN python -c "import json,pathlib,os; p=pathlib.Path('/opt/al1s/runtime-manifest.json'); m=json.loads(p.read_text()); assert m['role']=='qq' and m['runtime_version']==os.environ['RUNTIME_VERSION'] and m['qq_device_identity_v1']; m['native_version']=os.environ['NATIVE_VERSION']; m['qq_device_name_override']=os.environ['NATIVE_VERSION']=='8.3.2'; p.write_text(json.dumps(m))"
+ENV PYTHONPATH=/opt/al1s AL1S_MEME_ROLE=qq AL1S_QQ_BOOTSTRAP_VERSION=1 PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+LABEL org.al1s.bot-role=qq org.al1s.native-version=${NATIVE_VERSION} org.al1s.runtime-version=${RUNTIME_VERSION}
+RUN PYTHONPATH=/opt/al1s python -c "import ssl,PIL,psycopg; from al1s.meme_workshop.runtime_identity import read_runtime_identity; assert read_runtime_identity().role=='qq'; assert ssl.create_default_context().cert_store_stats()['x509_ca']>0" && node --version
+RUN python -m al1s.meme_workshop.runtime_probe
+ENTRYPOINT ["python","-m","al1s.bots.qq_identity.startup"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 CMD ["python","-m","al1s.meme_workshop.healthcheck"]

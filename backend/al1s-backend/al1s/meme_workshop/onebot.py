@@ -24,6 +24,7 @@ class QqMessage:
     image_urls: list[str]
     texts: list[str]
     reply_id: str | None
+    copied_target_text: str | None = None
 
 
 def image_urls(message: object) -> list[str]:
@@ -37,6 +38,20 @@ def image_urls(message: object) -> list[str]:
         and isinstance(segment.get("data"), dict)
         and isinstance(segment["data"].get("url"), str)
     ]
+
+
+def command_parts(body: str, keywords: set[str]) -> list[str]:
+    parts = body.strip().split(maxsplit=1)
+    if not parts or unicodedata.normalize("NFKC", parts[0]).casefold() in keywords:
+        return parts
+    markers = [index for index, char in enumerate(parts[0]) if char in {"@", "\uff20"}]
+    if markers:
+        offset = markers[0]
+        prefix = parts[0][:offset]
+        if unicodedata.normalize("NFKC", prefix).casefold() in keywords:
+            tail = parts[0][offset:] + (" " + parts[1] if len(parts) > 1 else "")
+            return [prefix, tail]
+    return parts
 
 
 def parse_event(event: object, keywords: set[str]) -> QqMessage | None:
@@ -84,13 +99,13 @@ def parse_event(event: object, keywords: set[str]) -> QqMessage | None:
             value = str(data.get("id", ""))
             if re.fullmatch(r"-?[0-9]{1,64}", value):
                 reply = value
-    parts = "".join(words).strip().split(maxsplit=1)
+    parts = command_parts("".join(words), keywords | {"头像合成", "随机表情", "表情列表"})
     if not parts:
         return None
     keyword = unicodedata.normalize("NFKC", parts[0]).casefold()
     tail = parts[1].strip() if len(parts) > 1 else ""
     if keyword == "头像合成":
-        names = tail.split(maxsplit=1)
+        names = command_parts(tail, keywords)
         if not names:
             return None
         keyword = unicodedata.normalize("NFKC", names[0]).casefold()
@@ -98,6 +113,11 @@ def parse_event(event: object, keywords: set[str]) -> QqMessage | None:
     elif keyword not in keywords | {"随机表情", "表情列表"}:
         return None
     texts = [part.strip() for part in tail.split("|") if part.strip()]
+    copied = (
+        texts[0]
+        if not mentions and texts and unicodedata.normalize("NFKC", texts[0]).startswith("@")
+        else None
+    )
     return QqMessage(
         CommandSource.model_validate(
             {
@@ -108,10 +128,11 @@ def parse_event(event: object, keywords: set[str]) -> QqMessage | None:
             }
         ),
         keyword,
-        mentions or [sender],
+        mentions or ([] if copied else [sender]),
         image_urls(segments),
         texts,
         reply,
+        copied,
     )
 
 
@@ -129,10 +150,13 @@ class OneBotClient:
             raise ValueError("invalid_onebot_endpoint")
         self._base, self._token = base_url.rstrip("/"), token
 
-    def post(self, action: str, payload: dict[str, object]) -> dict[str, Any]:
+    def _data(
+        self, action: str, payload: dict[str, object], *, max_response_bytes: int = 65_536
+    ) -> object:
         try:
             result = post_json_direct(
-                self._base + "/" + action, self._token, payload, timeout_seconds=5
+                self._base + "/" + action, self._token, payload, timeout_seconds=5,
+                max_response_bytes=max_response_bytes,
             )
         except DirectHttpError as exc:
             raise ValueError("onebot_operation_unknown") from exc
@@ -143,8 +167,26 @@ class OneBotClient:
             or result.get("status") != "ok"
         ):
             raise ValueError("onebot_operation_rejected")
-        data = result.get("data")
+        return result.get("data")
+
+    def post(self, action: str, payload: dict[str, object]) -> dict[str, Any]:
+        data = self._data(action, payload)
         return data if isinstance(data, dict) else {}
+
+    def group_members(self, group_id: str) -> list[dict[str, Any]]:
+        from al1s.meme_workshop.copied_mentions import MAX_MEMBERS
+
+        data = self._data(
+            "get_group_member_list", {"group_id": int(group_id), "no_cache": True},
+            max_response_bytes=8 * 1024 * 1024,
+        )
+        if not isinstance(data, list) or len(data) > MAX_MEMBERS:
+            raise ValueError("onebot_members_invalid")
+        if any(not isinstance(row, dict) for row in data):
+            raise ValueError("onebot_members_invalid")
+        if any(identity(row.get("group_id")) != group_id for row in data):
+            raise ValueError("onebot_members_invalid")
+        return data
 
     def reply_images(self, message_id: str) -> list[str]:
         return image_urls(self.post("get_msg", {"message_id": int(message_id)}).get("message"))

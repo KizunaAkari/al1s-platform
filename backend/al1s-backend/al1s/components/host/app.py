@@ -12,15 +12,19 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict
 
 from al1s.components.host.backup import private_json
+from al1s.components.host.bot_deployment import BotDeployment
+from al1s.components.host.bot_driver import BotUpgradeDriver
 from al1s.components.host.commands import CommandRunner
 from al1s.components.host.compose_driver import ComposeDeployment
 from al1s.components.host.config import HostSettings
 from al1s.components.host.contracts import JsonObject
 from al1s.components.host.deployment_driver import DeploymentDriver
+from al1s.components.host.deployment_router import DeploymentRouter
 from al1s.components.host.executor import HostComponentExecutor
 from al1s.components.host.journal import HostJournal
 from al1s.components.host.platform_client import PlatformComponentClient
 from al1s.components.host.probes import inventory
+from al1s.components.host.qq_candidate_builder import QqCandidateBuilder
 from al1s.components.status_capability import StatusCapability
 from al1s.execution.errors import ExecutionDomainError
 
@@ -38,12 +42,17 @@ class OperationRequest(BaseModel):
 def create_host(settings: HostSettings) -> FastAPI:
     deployment = ComposeDeployment(settings, CommandRunner())
     client = PlatformComponentClient(settings.platform)
-    driver = DeploymentDriver(deployment, client)
+    bot = (
+        BotUpgradeDriver(BotDeployment(settings.bots, CommandRunner()), client, settings.state_dir)
+        if settings.bots
+        else None
+    )
+    driver = DeploymentRouter(DeploymentDriver(deployment, client), bot)
     executor = HostComponentExecutor(HostJournal(settings.state_dir / "operations"), driver)
     signer = StatusCapability(settings.platform.token.get_secret_value())
     verification_root = settings.state_dir / "verifications"
     verification_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="component-upgrade")
+    pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="component-upgrade")
     probes = ThreadPoolExecutor(max_workers=1, thread_name_prefix="component-verification")
     queue_lock = RLock()
     physical_lock = RLock()
@@ -94,7 +103,59 @@ def create_host(settings: HostSettings) -> FastAPI:
     @app.get("/inventory")
     def observation(authorization: str | None = Header(None)) -> JsonObject:
         authorize(authorization)
-        return {"items": inventory(deployment)}
+        values = inventory(deployment)
+        if bot is not None:
+            from al1s.components.host.bot_inventory import bot_inventory
+
+            values.extend(bot_inventory(bot.deployment))
+        return {"items": values}
+
+    @app.post("/qq-candidates/prepare")
+    def prepare_qq(body: ReleaseRequest, authorization: str | None = Header(None)) -> JsonObject:
+        authorize(authorization)
+        release = client.release(body.release_id)
+        if release.source_kind != "registry" or release.state != "verifying":
+            raise HTTPException(409, detail="qq_candidate_not_verifying")
+        root = settings.state_dir / "qq-candidate-results"
+        root.mkdir(exist_ok=True, mode=0o700)
+        path = root / (str(body.release_id) + ".json")
+        with executor.reservation_lock:
+            if path.exists():
+                prior = cast(JsonObject, json.loads(path.read_text()))
+                if prior.get("state") == "completed" or (
+                    prior.get("state") == "preparing"
+                    and prior.get("executor_instance") == executor.instance
+                ):
+                    return prior
+            private_json(path, {"state": "preparing", "executor_instance": executor.instance})
+
+        def prepare() -> None:
+            try:
+                result = QqCandidateBuilder(settings, client, CommandRunner()).prepare(
+                    body.release_id
+                )
+                private_json(path, {"state": "completed", "result": result.model_dump()})
+            except Exception:
+                private_json(
+                    path, {"state": "failed", "error_code": "qq_candidate_preparation_failed"}
+                )
+
+        probes.submit(prepare)
+        return {"state": "preparing"}
+
+    @app.get("/qq-candidates/{identity}")
+    def prepared_qq(identity: UUID, authorization: str | None = Header(None)) -> JsonObject:
+        authorize(authorization)
+        path = settings.state_dir / "qq-candidate-results" / (str(identity) + ".json")
+        if not path.is_file():
+            raise HTTPException(404, detail="qq_candidate_not_received")
+        result = cast(JsonObject, json.loads(path.read_text()))
+        if (
+            result.get("state") == "preparing"
+            and result.get("executor_instance") != executor.instance
+        ):
+            return {"state": "failed", "error_code": "qq_candidate_preparation_interrupted"}
+        return result
 
     def verify_package(identity: UUID, generation: int) -> None:
         directory = verification_root / f"{identity}-{generation}"
@@ -163,6 +224,8 @@ def create_host(settings: HostSettings) -> FastAPI:
         return receipt
 
     def execute(identity: UUID, payload: JsonObject) -> JsonObject:
+        if payload.get("operation", {}).get("target", {}).get("kind") == "bot":
+            return executor.execute(identity, payload)
         with physical_lock:
             return executor.execute(identity, payload)
 
@@ -174,6 +237,9 @@ def create_host(settings: HostSettings) -> FastAPI:
     @app.post("/operations/{identity}/reconcile")
     def reconcile(identity: UUID, authorization: str | None = Header(None)) -> JsonObject:
         authorize(authorization)
+        record = executor.journal.load(identity)
+        if record and executor.journal.scope(record.get("payload", {})).startswith("bot:"):
+            return executor.reconcile(identity)
         with physical_lock:
             return executor.reconcile(identity)
 

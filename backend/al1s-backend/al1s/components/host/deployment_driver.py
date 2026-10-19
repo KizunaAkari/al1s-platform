@@ -78,6 +78,7 @@ class DeploymentDriver:
         return {"backup_id": str(identity)}
 
     def verify_archive(self, path: Path, release: ComponentRelease) -> None:
+        assert release.candidate_image and release.expected_image_id
         DockerArchiveVerifier(lambda *_: release.native_version).verify(path, release)
         for component in SERVICES:
             for service in self.deployment.services(component):
@@ -128,6 +129,7 @@ class DeploymentDriver:
             backup_data(self.deployment, release.component, directory, snapshot["utility_image"])
         snapshot["phase"] = "activating"
         private_json(directory / "snapshot.json", snapshot)
+        assert release.candidate_image
         self.deployment.change_image(release.component, release.candidate_image)
         if release.component == "platform":
             platform.migrate(self.deployment, release)

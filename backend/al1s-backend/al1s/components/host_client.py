@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import Field, ValidationError
 
+from al1s.bots.qq_identity.contracts import QqIdentitySummary
+from al1s.components.bot_contracts import BuiltQqCandidate
 from al1s.components.contracts import Contract, UpgradeUnit
 from al1s.components.types import NativeComponent
 from al1s.execution.host_management import HostManagerConnection
@@ -24,6 +26,11 @@ class HostInventoryItem(Contract):
     image_id: str | None = Field(default=None, max_length=71)
     source_identity: str | None = Field(default=None, max_length=64)
     storage_layout: Literal["legacy", "bundle"] | None = None
+    runtime_version: str | None = None
+    qq_identity: QqIdentitySummary | None = None
+    qq_protocol_mode: Literal["direct", "pmhq"] = "direct"
+    qq_client_version: str | None = Field(default=None, max_length=64)
+    pmhq_version: str | None = Field(default=None, max_length=64)
 
 
 class ComponentHostClient:
@@ -81,6 +88,19 @@ class ComponentHostClient:
             time.sleep(1)
             result = self.request(f"/verifications/{identity}?generation={generation}")
         raise ValueError("component_native_probe_timeout")
+
+    def prepare_qq_release(self, identity: UUID) -> BuiltQqCandidate:
+
+        result = self.request("/qq-candidates/prepare", {"release_id": str(identity)})
+        deadline = time.monotonic() + 1800
+        while time.monotonic() < deadline:
+            if result.get("state") == "completed":
+                return BuiltQqCandidate.model_validate(result["result"])
+            if result.get("state") == "failed":
+                raise ValueError("qq_candidate_preparation_failed")
+            time.sleep(2)
+            result = self.request(f"/qq-candidates/{identity}")
+        raise ValueError("qq_candidate_preparation_timeout")
 
     def submit(self, operation_id: UUID) -> dict[str, object]:
         result = self.request("/operations", {"operation_id": str(operation_id)})

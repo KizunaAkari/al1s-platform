@@ -45,6 +45,7 @@ class PlatformComponentClient:
         return ComponentRelease.model_validate_json(self.request(f"/releases/{identity}"))
 
     def download(self, release: ComponentRelease, path: Path) -> None:
+        assert release.size_bytes is not None and release.sha256 is not None
         if shutil.disk_usage(path.parent).free < release.size_bytes + 64 * 1024**2:
             raise ValueError("component_download_disk_space")
         digest = hashlib.sha256()

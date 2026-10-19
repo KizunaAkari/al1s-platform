@@ -212,8 +212,12 @@ class MemeSendGateRow(Base):
     __tablename__ = "meme_send_gates"
     __table_args__ = (
         CheckConstraint("platform IN ('qq','discord')", name="ck_meme_gate_platform"),
+        CheckConstraint("interval_seconds BETWEEN 1 AND 3600", name="ck_meme_gate_interval"),
+        CheckConstraint("row_version > 0", name="ck_meme_gate_version"),
     )
     platform: Mapped[str] = mapped_column(String(16), primary_key=True)
+    interval_seconds: Mapped[int] = mapped_column(Integer, server_default="10")
+    row_version: Mapped[int] = mapped_column(Integer, server_default="1")
     available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     owner_receipt_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("meme_command_receipts.id", ondelete="SET NULL"),

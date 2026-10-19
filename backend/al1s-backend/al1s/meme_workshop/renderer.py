@@ -1,8 +1,9 @@
 from io import BytesIO
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageOps
 
 from al1s.meme_workshop.contracts import AvatarSlot, Layout, RenderedImage, RenderInputs, TextSlot
+from al1s.meme_workshop.gif_encoder import encode_transparent_gif
 from al1s.meme_workshop.images import MAX_BYTES, decode_image
 from al1s.meme_workshop.petpet_hand import petpet_frames
 from al1s.meme_workshop.text import draw_text
@@ -21,16 +22,7 @@ def avatar_tile(image: Image.Image, slot: AvatarSlot) -> Image.Image:
     if slot.shape == "circle":
         mask = Image.new("L", size)
         ImageDraw.Draw(mask).ellipse((0, 0, size[0] - 1, size[1] - 1), fill=255)
-        image.putalpha(
-            Image.frombytes(
-                "L",
-                size,
-                bytes(
-                    min(a, b)
-                    for a, b in zip(image.getchannel("A").tobytes(), mask.tobytes(), strict=True)
-                ),
-            )
-        )
+        image.putalpha(ImageChops.darker(image.getchannel("A"), mask))
     return image.rotate(-slot.rotation, resample=Image.Resampling.BICUBIC)
 
 
@@ -91,15 +83,7 @@ def render(layout: Layout, inputs: RenderInputs, assets: dict[str, bytes]) -> Re
     output = BytesIO()
     if layout.engine == "petpet":
         frames = petpet(layout, inputs)
-        frames[0].save(
-            output,
-            "GIF",
-            save_all=True,
-            append_images=frames[1:],
-            loop=0,
-            duration=layout.frame_duration_ms,
-            disposal=2,
-        )
+        output.write(encode_transparent_gif(frames, layout.frame_duration_ms))
         image, media_type = frames[0], "image/gif"
     else:
         image = (

@@ -21,7 +21,7 @@ class CompositeUpgradeHost:
     def available(self, target: ComponentTarget) -> bool:
         return (
             self.platform.connection is not None
-            if target.kind == "platform"
+            if target.kind in {"platform", "bot"}
             else target.terminal_id in self.linux.connections
         )
 

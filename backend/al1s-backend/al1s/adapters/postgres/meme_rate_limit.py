@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 
 from al1s.adapters.postgres.meme_models import MemeSendGateRow
 
-INTERVALS = {"discord": 10, "qq": 30}
 # A lost result keeps the reservation longer than the complete 15-second command deadline.
 UNKNOWN_SEND_HOLD_SECONDS = 20
 
@@ -18,7 +17,7 @@ def reserve_send(session: Session, platform: str, receipt_id: UUID, now: datetim
     if gate.available_at > now:
         return False
     gate.owner_receipt_id = receipt_id
-    gate.available_at = now + timedelta(seconds=INTERVALS[platform] + UNKNOWN_SEND_HOLD_SECONDS)
+    gate.available_at = now + timedelta(seconds=gate.interval_seconds + UNKNOWN_SEND_HOLD_SECONDS)
     return True
 
 
@@ -31,5 +30,5 @@ def finish_send(session: Session, receipt_id: UUID) -> None:
         .with_for_update()
     )
     if gate is not None:
-        gate.available_at = datetime.now(UTC) + timedelta(seconds=INTERVALS[gate.platform])
+        gate.available_at = datetime.now(UTC) + timedelta(seconds=gate.interval_seconds)
         gate.owner_receipt_id = None

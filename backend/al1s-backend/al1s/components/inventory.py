@@ -21,16 +21,25 @@ def native_entry(item: NativeComponent) -> ComponentInventoryEntry:
     return ComponentInventoryEntry(
         component=item.component,
         upgrade_unit=item.component,
-        target=ComponentTarget(kind="platform"),
+        target=ComponentTarget(kind="bot", bot_alias=item.component[:-4])
+        if item.component in {"qq-bot", "discord-bot"}
+        else ComponentTarget(kind="platform"),
         display_name=item.component,
         version=version(item.version),
         architecture=item.architecture,
-        status=item.status if item.status in {"healthy", "unhealthy", "unknown"} else "unknown",
+        status=item.status
+        if item.status in {"healthy", "offline", "unhealthy", "unknown"}
+        else "unknown",
         observed_at=item.observed_at,
         image=item.image,
         image_id=item.image_id,
         source_identity=item.source_identity,
         storage_layout=item.storage_layout,
+        runtime_version=item.runtime_version,
+        qq_identity=item.qq_identity,
+        qq_protocol_mode=item.qq_protocol_mode,
+        qq_client_version=item.qq_client_version,
+        pmhq_version=item.pmhq_version,
     )
 
 

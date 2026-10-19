@@ -5,8 +5,10 @@ import { loadConfig, type AppConfig } from "./config.js";
 import { PlatformConfigProvider } from "./platform-config-provider.js";
 import type { ForwardRule } from "./bridge/forward-rule-matcher.js";
 import type { RuleForwardMessage } from "./platform-ingress.js";
+import type { WorkerIdentity } from "./health/state.js";
 
 export interface ConfigProvider {
+  runtimeIdentity?(): WorkerIdentity | null;
   memeRequest?(path: string, init: RequestInit): Promise<Response>;
   loadForwardRules?(signal?: AbortSignal): Promise<ForwardRule[]>;
   submitMessage?(message: RuleForwardMessage): Promise<void>;

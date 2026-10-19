@@ -8,7 +8,8 @@ from al1s.meme_workshop.contracts import TextSlot
 FONT = Path(__file__).with_name("assets") / "NotoSansCJKsc-Regular.otf"
 
 
-@lru_cache(maxsize=128)
+# Each FreeType face retains native font data; auto-fit can visit hundreds of sizes.
+@lru_cache(maxsize=16)
 def font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(str(FONT), size)
 

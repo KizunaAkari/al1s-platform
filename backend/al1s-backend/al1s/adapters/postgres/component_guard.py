@@ -6,8 +6,8 @@ from sqlalchemy import exists, select, text
 from sqlalchemy.orm import Session
 
 from al1s.adapters.postgres.component_models import ComponentOperationRow
-from al1s.adapters.postgres.execution_models import TargetDeviceRow
 from al1s.adapters.postgres.device_path_models import DeviceAuthorityRow
+from al1s.adapters.postgres.execution_models import TargetDeviceRow
 from al1s.execution.errors import ConflictError
 
 ACTIVE = ("accepted", "preparing", "switching", "verifying", "unknown")

@@ -39,6 +39,9 @@ class Settings(BaseSettings):
 
     frontend_directory: str | None = None
     meme_backend_url: str = ""
+    meme_qq_backend_url: str = ""
+    qq_runtime_artifact_digest: str = ""
+    qq_runtime_version: str = ""
     meme_backend_token: SecretStr = SecretStr("")
     environment: str = "development"
     admin_password: SecretStr = SecretStr("")

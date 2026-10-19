@@ -5,4 +5,4 @@ FROM ${BASE_IMAGE}
 COPY --from=backend --chown=al1s:al1s al1s /app/al1s
 COPY --from=backend --chown=al1s:al1s migrations /app/migrations
 COPY --from=frontend --chown=al1s:al1s . /app/frontend/
-RUN python -c "from al1s.main import app; from al1s.adapters.postgres.meme_models import MemeSendGateRow; from al1s.api.meme_proxy import router; assert len(router.routes)==2; app.openapi()"
+RUN python -c "from al1s.main import app; from al1s.api.meme_proxy import router; assert '/api/v1/bots/updates/{alias}' in app.openapi()['paths']; assert any(r.path=='/bots/memes/{platform}/{path:path}' for r in router.routes)"

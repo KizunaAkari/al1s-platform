@@ -38,6 +38,7 @@ def component_services(
             objects,
             DockerArchiveVerifier(lambda _path, release: host.verify_release(release.release_id)),
             directory,
+            registry_prepare=host.prepare_qq_release,
         ),
         ComponentUpgradeService(
             store,

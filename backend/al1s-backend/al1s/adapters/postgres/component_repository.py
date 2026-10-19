@@ -5,6 +5,8 @@ from sqlalchemy import select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from al1s.adapters.postgres.bot_candidates import BotCandidateRepository
+from al1s.adapters.postgres.bot_release_catalog import BotReleaseCatalogRepository
 from al1s.adapters.postgres.component_models import ComponentReleaseRow
 from al1s.adapters.postgres.component_operation_repository import ComponentOperationRepository
 from al1s.adapters.postgres.component_records import release_record
@@ -15,7 +17,12 @@ from al1s.components.types import TerminalProfile
 from al1s.execution.errors import ConflictError, NotFoundError
 
 
-class ComponentRepository(ComponentReleaseRepository, ComponentOperationRepository):
+class ComponentRepository(
+    ComponentReleaseRepository,
+    ComponentOperationRepository,
+    BotCandidateRepository,
+    BotReleaseCatalogRepository,
+):
     def __init__(self, sessions: sessionmaker[Session]):
         self.sessions = sessions
 

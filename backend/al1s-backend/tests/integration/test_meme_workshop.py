@@ -49,12 +49,88 @@ def repository() -> Iterator[tuple[MemeRepository, Engine]]:
                 owner_receipt_id=None,
             )
         )
+        for platform, interval in (("discord", 5), ("qq", 10)):
+            session.execute(
+                update(MemeSendGateRow)
+                .where(MemeSendGateRow.platform == platform)
+                .values(interval_seconds=interval, row_version=1)
+            )
     yield repository, engine
     engine.dispose()
 
 
 def template(keyword: str) -> TemplateWrite:
     return TemplateWrite(name=keyword, keyword=keyword, layout=Layout())
+
+
+def test_global_configuration_persists_with_cas_and_preserves_active_cooldown(repository):
+    from al1s.meme_workshop.rate_limits import RateLimitWrite
+
+    catalog, engine = repository
+    assert {row.platform: row.interval_seconds for row in catalog.get_rate_limits()} == {
+        "discord": 5, "qq": 10
+    }
+    deadline = datetime.now(UTC) + timedelta(seconds=90)
+    with catalog.sessions.begin() as session:
+        session.execute(
+            update(MemeSendGateRow)
+            .where(MemeSendGateRow.platform == "qq")
+            .values(available_at=deadline)
+        )
+    value = catalog.save_rate_limit("qq", RateLimitWrite(interval_seconds=7), expected_version=1)
+    assert value.interval_seconds == 7 and value.row_version == 2
+    with pytest.raises(ValueError, match="conflict"):
+        catalog.save_rate_limit("qq", RateLimitWrite(interval_seconds=4), expected_version=1)
+    reopened = MemeRepository(catalog.sessions)
+    assert next(row for row in reopened.get_rate_limits() if row.platform == "qq") == value
+    with catalog.sessions() as session:
+        row = session.get(MemeSendGateRow, "qq")
+        assert row.available_at == deadline and row.owner_receipt_id is None
+    statements = []
+
+    def count_sql(connection, cursor, statement, parameters, context, many):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", count_sql)
+    try:
+        assert len(reopened.get_rate_limits()) == 2
+    finally:
+        event.remove(engine, "before_cursor_execute", count_sql)
+    assert len(statements) == 1
+
+
+def test_concurrent_global_configuration_edits_have_one_winner(repository):
+    from al1s.meme_workshop.rate_limits import RateLimitWrite
+
+    catalog, _ = repository
+
+    def edit(seconds):
+        try:
+            return catalog.save_rate_limit(
+                "discord", RateLimitWrite(interval_seconds=seconds), expected_version=1
+            )
+        except ValueError as error:
+            assert str(error) == "rate_limit_version_conflict"
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        values = list(pool.map(edit, (8, 12)))
+    assert sum(value is not None for value in values) == 1
+    current = next(row for row in catalog.get_rate_limits() if row.platform == "discord")
+    assert current.row_version == 2 and current.interval_seconds in (8, 12)
+
+
+def test_global_interval_database_constraints_reject_invalid_values(repository):
+    from sqlalchemy.exc import IntegrityError
+
+    catalog, _ = repository
+    for seconds in (0, 3601):
+        with pytest.raises(IntegrityError), catalog.sessions.begin() as session:
+            session.execute(
+                update(MemeSendGateRow)
+                .where(MemeSendGateRow.platform == "qq")
+                .values(interval_seconds=seconds)
+            )
 
 
 def test_save_replay_conflict_and_alias_unique_are_atomic(repository) -> None:
@@ -406,10 +482,10 @@ def test_global_send_limit_cannot_be_bypassed_by_a_different_bot_user_or_group(r
     with catalog.sessions() as session:
         gate = session.get(MemeSendGateRow, "qq")
         assert gate is not None
-        assert (gate.available_at - datetime.now(UTC)).total_seconds() >= 29
+        assert 9 <= (gate.available_at - datetime.now(UTC)).total_seconds() <= 10
 
 
-def test_discord_ten_second_global_interval_is_independent_of_qq(repository) -> None:
+def test_discord_five_second_global_interval_is_independent_of_qq(repository) -> None:
     catalog, _ = repository
     bot_id = uuid4()
     with catalog.sessions.begin() as session:
@@ -428,7 +504,7 @@ def test_discord_ten_second_global_interval_is_independent_of_qq(repository) -> 
     catalog.settle(bot_id, receipt, "sent")
     with catalog.sessions() as session:
         gate = session.get(MemeSendGateRow, "discord")
-        assert gate and (gate.available_at - datetime.now(UTC)).total_seconds() >= 9
+        assert gate and 4 <= (gate.available_at - datetime.now(UTC)).total_seconds() <= 5
         qq = session.get(MemeSendGateRow, "qq")
         assert qq and qq.available_at < datetime.now(UTC)
 

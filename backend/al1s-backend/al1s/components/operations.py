@@ -1,4 +1,5 @@
 import hashlib
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -25,21 +26,44 @@ SERVICES = {
     "s3": ["backend", "seaweed-master", "seaweed-volume", "seaweed-filer", "seaweed-s3"],
     "mqtt": ["backend", "mosquitto"],
     "linux-terminal": ["terminal-agent"],
+    "qq-bot": ["llbot"],
+    "discord-bot": ["discord-worker"],
 }
 FINAL = {"succeeded", "failed_safe"}
+
+
+def identity_runtime_version_supported(value: str | None) -> bool:
+    if value is None or not re.fullmatch(r"[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}", value):
+        return False
+    return tuple(int(part) for part in value.split(".")) >= (1, 1, 0)
 
 
 def compatible_release(
     current: ComponentInventoryEntry, release: ComponentReleaseInput
 ) -> list[str]:
     reasons = []
+    summary = current.qq_identity
+    headed = getattr(current, "qq_protocol_mode", "direct") == "pmhq"
+    if release.component == "qq-bot" and headed and release.runtime_version != "2.0.0":
+        reasons.append("qq_headed_runtime_required")
+    if release.component == "qq-bot" and not headed and summary is not None:
+        if summary.pending:
+            reasons.append("qq_identity_pending_restart")
+        if summary.failed:
+            reasons.append("qq_identity_apply_unresolved")
+        if summary.configured and not identity_runtime_version_supported(release.runtime_version):
+            reasons.append("qq_identity_runtime_unsupported")
+        if summary.custom_name and release.native_version != "8.3.2":
+            reasons.append("qq_device_name_override_unsupported")
     if release.component == "s3":
-        bundled = release.candidate_image.split(":", 1)[0] == "al1s-platform-storage"
+        bundled = (release.candidate_image or "").split(":", 1)[0] == "al1s-platform-storage"
         if bundled != (current.storage_layout == "bundle"):
             reasons.append("component_storage_layout_mismatch")
     if current.upgrade_unit != release.component:
         reasons.append("component_mismatch")
-    if current.status != "healthy" or not current.source_identity:
+    if (
+        current.status != "healthy" and current.target.kind != "bot"
+    ) or not current.source_identity:
         reasons.append("component_not_ready")
     if current.architecture != release.architecture:
         reasons.append("architecture_mismatch")
@@ -82,7 +106,9 @@ def receipt_transition(current: str, received: str, proof: bool) -> str:
 class OperationStore(Protocol):
     def get_linux_profile(self, identity: UUID) -> TerminalProfile | None: ...
     def active_operations(self) -> list[ComponentOperation]: ...
-    def list_operations(self, limit: int = 25, cursor: UUID | None = None) -> OperationPage: ...
+    def list_operations(
+        self, limit: int = 25, cursor: UUID | None = None, scope: str | None = None
+    ) -> OperationPage: ...
     def find_operation(self, scope: str, key: str) -> tuple[ComponentOperation, str] | None: ...
     def get_release(self, identity: UUID) -> ComponentRelease: ...
     def reserve_operation(
@@ -119,6 +145,11 @@ class ComponentUpgradeService:
 
     def preflight(self, target: ComponentTarget, release_id: UUID) -> ComponentPreflight:
         release = self.store.get_release(release_id)
+        bot = release.component in {"qq-bot", "discord-bot"}
+        if bot != (target.kind == "bot") or (
+            bot and release.component != f"{target.bot_alias}-bot"
+        ):
+            raise ConflictError("component_target_mismatch", "Version target does not match Bot")
         if (release.component == "linux-terminal") != (target.kind == "terminal"):
             raise ConflictError(
                 "component_target_mismatch", "Version target does not match component"

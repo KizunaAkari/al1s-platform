@@ -9,12 +9,13 @@ from al1s.app.service_state import service_state
 router = APIRouter()
 UUID_PART = r"[0-9a-fA-F-]{36}"
 ADMIN_PATH = re.compile(
-    rf"(?:templates(?:/{UUID_PART})?|settings/{UUID_PART}|assets(?:/{UUID_PART})?|preview)\Z"
+    rf"(?:templates(?:/{UUID_PART})?|settings/{UUID_PART}|assets(?:/{UUID_PART})?|preview|"
+    r"rate-limits(?:/(?:discord|qq))?|runtime)\Z"
 )
 WORKER_PATH = re.compile(rf"(?:catalog|claim|render|{UUID_PART}/(?:send|result))\Z")
 
 
-async def forward(request: Request, path: str) -> Response:
+async def forward(request: Request, path: str, platform: str | None = None) -> Response:
     body = bytearray()
     async for chunk in request.stream():
         if len(body) + len(chunk) > 56 * 1024 * 1024:
@@ -30,8 +31,10 @@ async def forward(request: Request, path: str) -> Response:
         if (value := request.headers.get(name)) is not None
     }
     try:
+        services = service_state(request)
+        backend = services.meme_backend if platform is None else services.meme_backends[platform]
         result = await run_in_threadpool(
-            service_state(request).meme_backend.forward,
+            backend.forward,
             request.method,
             path + suffix,
             bytes(body),
@@ -52,6 +55,17 @@ async def forward(request: Request, path: str) -> Response:
         media_type=result.media_type,
         headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
     )
+
+
+@router.api_route(
+    "/bots/memes/{platform}/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE"],
+    include_in_schema=False,
+)
+async def platform_forward(platform: str, path: str, request: Request) -> Response:
+    if platform not in {"qq", "discord"} or not ADMIN_PATH.fullmatch(path):
+        raise HTTPException(404, "meme_endpoint_not_found")
+    return await forward(request, f"/api/v1/bots/memes/{path}", platform)
 
 
 @router.api_route(

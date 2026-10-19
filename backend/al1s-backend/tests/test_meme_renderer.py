@@ -48,6 +48,25 @@ def test_petpet_is_a_bounded_looping_animation() -> None:
     assert len(result.body) < 8 * 1024 * 1024
 
 
+def test_petpet_transparent_corners_do_not_erase_normal_green_avatar_pixels():
+    result = render(
+        Layout(engine="petpet", width=112, height=112, frame_duration_ms=80),
+        RenderInputs(avatars=[png("#00ff00")]),
+        {},
+    )
+    image = Image.open(BytesIO(result.body))
+    for index in range(image.n_frames):
+        image.seek(index)
+        pixels = image.convert("RGBA")
+        assert pixels.getpixel((0, 111))[3] == 0
+        assert any(
+            pixels.getpixel((x, y)) == (0, 255, 0, 255)
+            for y in range(pixels.height)
+            for x in range(pixels.width)
+        )
+        assert pixels.getpixel((5, 40))[3] == 255
+
+
 def test_petpet_uses_the_original_photographic_hand_and_synchronized_squash() -> None:
     frames = petpet(
         Layout(engine="petpet", width=112, height=112), RenderInputs(avatars=[png("#ff00ff")])

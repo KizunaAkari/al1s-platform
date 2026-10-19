@@ -57,10 +57,10 @@ async def probe_foreground_package(
             max_queue=1,
             compression=None,
         ) as upstream:
-            response = await asyncio.wait_for(upstream.recv(), 15)
-        if not isinstance(response, bytes):
+            received = await asyncio.wait_for(upstream.recv(), 15)
+        if not isinstance(received, bytes):
             raise ValueError("binary response required")
-        data = json.loads(response)
+        data = json.loads(received)
         package = data.get("package_name") if isinstance(data, dict) else None
         if not isinstance(package, str) or not PACKAGE.fullmatch(package):
             raise ValueError("invalid foreground package")

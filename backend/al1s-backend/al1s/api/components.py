@@ -7,6 +7,7 @@ from fastapi import APIRouter, Header, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from al1s.app.service_state import service_state
+from al1s.components.bot_contracts import BotAlias
 from al1s.components.contracts import (
     ComponentOperation,
     ComponentPreflight,
@@ -42,9 +43,17 @@ def start_upgrade(body: ComponentUpgradeRequest, request: Request) -> ComponentO
 
 @router.get("/operations", response_model=OperationPage)
 def operations(
-    request: Request, limit: int = Query(25, ge=1, le=25), cursor: UUID | None = None
+    request: Request,
+    limit: int = Query(25, ge=1, le=25),
+    cursor: UUID | None = None,
+    bot_alias: BotAlias | None = None,
 ) -> OperationPage:
-    return service_state(request).component_upgrades.store.list_operations(limit, cursor)
+    store = service_state(request).component_upgrades.store
+    return (
+        store.list_operations(limit, cursor, f"bot:{bot_alias}")
+        if bot_alias
+        else store.list_operations(limit, cursor)
+    )
 
 
 @router.get("/operations/{identity}", response_model=ComponentOperation)
@@ -122,7 +131,7 @@ def internal_manifest(
     identity: UUID, request: Request, authorization: str | None = Header(None)
 ) -> ComponentRelease:
     authorize_host(request, authorization)
-    return service_state(request).component_releases.store.release_object_key(identity, True)[0]
+    return service_state(request).component_releases.store.host_manifest(identity)
 
 
 @router.get("/internal/releases/{identity}/content")

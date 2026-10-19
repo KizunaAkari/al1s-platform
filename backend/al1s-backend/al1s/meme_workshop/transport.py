@@ -13,9 +13,10 @@ class BackendResponse:
 class MemeBackendClient:
     """One bounded direct HTTP attempt to the existing Bot container; no retries or redirects."""
 
-    def __init__(self, url: str, token: str) -> None:
+    def __init__(self, url: str, token: str, *, expected_role: str | None = None) -> None:
         self._address = urlsplit(url)
         self._token = token
+        self._role = expected_role
         if url and (
             self._address.scheme not in {"http", "https"}
             or not self._address.hostname
@@ -47,6 +48,8 @@ class MemeBackendClient:
                 },
             )
             response = connection.getresponse()
+            if self._role is not None and response.getheader("X-AL1S-Meme-Role") != self._role:
+                raise ValueError("meme_backend_role_mismatch")
             if 300 <= response.status < 400:
                 raise ValueError("meme_backend_redirect_rejected")
             encoded = response.read(8 * 1024 * 1024 + 1)

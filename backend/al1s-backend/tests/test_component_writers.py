@@ -60,3 +60,34 @@ def test_previously_stopped_writer_and_isolated_project_are_not_started():
     assert not any(args[1] == "start" for args in calls)
     isolated, calls, _ = deployment(project="isolated-fixture")
     assert capture_writer(isolated) is None and not calls
+
+
+def test_shared_storage_maintenance_quiesces_both_independent_bot_writers():
+    source, calls, discord = deployment()
+    import copy
+
+    qq = copy.deepcopy(discord)
+    qq.update(Id="c" * 64, Name="/al1s-bot-qq")
+    qq["Config"]["Labels"]["com.docker.compose.service"] = "llbot"
+
+    def run(args, timeout=30):
+        calls.append(args)
+        if args[1] == "ps":
+            return discord["Id"] + "\n" + qq["Id"]
+        if args[1] == "inspect":
+            return json.dumps(
+                [
+                    row
+                    for row in [discord, qq]
+                    if row["Id"] in args[2:] or row["Id"][:12] in args[2:]
+                ]
+            )
+        return ""
+
+    source.runner.run = run
+    snapshot = capture_writer(source)
+    writer_action(source, snapshot, "stop")
+    writer_action(source, snapshot, "start")
+    assert ["docker", "stop", "--time", "75", qq["Id"]] in calls
+    assert ["docker", "stop", "--time", "75", discord["Id"]] in calls
+    assert ["docker", "start", qq["Id"]] in calls

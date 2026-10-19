@@ -278,9 +278,8 @@ def _install_blob_services(
     )
     from al1s.app.component_services import component_services
 
-    (services.component_inventory, services.component_releases,
-     services.component_upgrades) = component_services(
-        settings, session_factory, release_blob_store, services.host_maintenance
+    (services.component_inventory, services.component_releases, services.component_upgrades) = (
+        component_services(settings, session_factory, release_blob_store, services.host_maintenance)
     )
     owned_blob_store: S3BlobStore | None = None
     if (
@@ -319,8 +318,21 @@ def _install_blob_services(
     from al1s.meme_workshop.transport import MemeBackendClient
 
     services.meme_backend = MemeBackendClient(
-        settings.meme_backend_url, settings.meme_backend_token.get_secret_value(),
+        settings.meme_backend_url,
+        settings.meme_backend_token.get_secret_value(),
     )
+    services.meme_backends = {
+        "discord": MemeBackendClient(
+            settings.meme_backend_url,
+            settings.meme_backend_token.get_secret_value(),
+            expected_role="discord",
+        ),
+        "qq": MemeBackendClient(
+            settings.meme_qq_backend_url,
+            settings.meme_backend_token.get_secret_value(),
+            expected_role="qq",
+        ),
+    }
     services.lineup = LineupService(
         LineupRepository(session_factory),
         LineupImages(maa_uow_factory, owned_blob_store),

@@ -19,6 +19,7 @@ interface Options {
   request(path: string, init: RequestInit): Promise<Response>;
   send(message: MemeMessage, result: MemeResult, signal: AbortSignal): Promise<void>;
   media?(url: string, signal: AbortSignal): Promise<Buffer>;
+  avatarURL?(guildId: string | null, userId: string, globalURL: string, signal: AbortSignal): Promise<string>;
   report?(code: string): void;
 }
 const ROOT = "/api/v1/bots/worker/memes";
@@ -130,14 +131,27 @@ export class MemeCommandService {
 
   private async generate(message: MemeMessage, command: ParsedCommand, receipt: string, signal: AbortSignal): Promise<MemeResult> {
     const media = this.options.media ?? readMemeMedia;
-    const avatars = command.mentionIds.map(id => message.mentions.users.get(id)).filter(user => user !== undefined);
+    const avatars = command.mentionIds.flatMap(id => {
+      const user = message.mentions.users.get(id);
+      return user ? [{ id, user }] : [];
+    });
     if (avatars.length > 4 || command.texts.length > 4 || command.texts.join("").length > 200) throw new Error("meme_inputs_exceeded");
-    if (!avatars.length) avatars.push(message.author);
+    if (!avatars.length) avatars.push({ id: message.author.id, user: message.author });
     const pictures = [...message.attachments.values()];
     if (!pictures.length && message.reference) pictures.push(...(await message.fetchReference()).attachments.values());
     if (pictures.length > 1) throw new Error("meme_multiple_images");
+    const lookups = new Map<string, Promise<string>>();
+    const urls = await Promise.all(avatars.map(({ id, user }) => {
+      if (!lookups.has(id)) {
+        const globalURL = user.displayAvatarURL({ forceStatic: true, extension: "png", size: 256 });
+        lookups.set(id, this.options.avatarURL
+          ? this.options.avatarURL(message.guildId, id, globalURL, signal) : Promise.resolve(globalURL));
+      }
+      return lookups.get(id)!;
+    }));
+    if (this.stopped || signal.aborted) throw new Error("meme_stopped");
     const [avatarBytes, imageBytes] = await Promise.all([
-      Promise.all(avatars.map(user => media(user.displayAvatarURL({ forceStatic: true, extension: "png", size: 256 }), signal))),
+      Promise.all(urls.map(url => media(url, signal))),
       Promise.all(pictures.map(picture => media(picture.url, signal))),
     ]);
     if (this.stopped || signal.aborted) throw new Error("meme_stopped");

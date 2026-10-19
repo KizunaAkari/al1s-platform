@@ -19,6 +19,7 @@ from al1s.meme_workshop.contracts import (
     TemplateWrite,
 )
 from al1s.meme_workshop.images import MAX_BYTES
+from al1s.meme_workshop.rate_limits import MemePlatform, RateLimitWrite
 from al1s.meme_workshop.service import MemeWorkshopService
 
 router = APIRouter()
@@ -159,6 +160,22 @@ def templates(
     )
     page = rows[:limit]
     return {"items": page, "next_cursor": str(page[-1].id) if len(rows) > limit else None}
+
+
+@router.get("/bots/memes/rate-limits")
+def rate_limits(request: Request) -> object:
+    return guarded(lambda: workshop(request).repository.get_rate_limits())
+
+
+@router.put("/bots/memes/rate-limits/{platform}")
+def save_rate_limit(
+    platform: MemePlatform, body: RateLimitWrite, request: Request, if_match: VersionHeader
+) -> object:
+    return guarded(
+        lambda: workshop(request).repository.save_rate_limit(
+            platform, body, expected_version=expected_version(if_match)
+        )
+    )
 
 
 @router.put("/bots/memes/templates/{identity}")

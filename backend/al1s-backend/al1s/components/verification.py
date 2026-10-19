@@ -102,6 +102,7 @@ class DockerArchiveVerifier:
                 raise ValueError("invalid_image_config")
             config_bytes = metadata(archive, config_name)
             identity = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
+            assert release.expected_image_id
             if identity != release.expected_image_id and not oci_identity(
                 archive, release.expected_image_id, identity
             ):

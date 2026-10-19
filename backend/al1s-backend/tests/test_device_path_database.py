@@ -1,6 +1,7 @@
 """Runs only against the separately created Android tmpfs fixture."""
 import hashlib
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -21,13 +22,16 @@ from al1s.adapters.postgres.execution_repositories import PostgresTargetDeviceRe
 
 @pytest.fixture
 def database():
-    path = Path(__file__).resolve().parents[3] / "artifacts/android-direct/path-test-db.json"
+    configured = os.environ.get("AL1S_ANDROID_TEST_DATABASE_CONFIG")
+    if not configured:
+        pytest.skip("AL1S_ANDROID_TEST_DATABASE_CONFIG must select the dedicated Android fixture")
+    path = Path(configured)
     if not path.exists():
         pytest.skip("Dedicated Android fixture has not been created")
     config = json.loads(path.read_text(encoding="utf-8"))
     assert config["container"] == "al1s-android-direct-test-20261006"
     assert config["tmpfs"] and not config["production_data_used"]
-    engine = create_engine(config["dsn"])
+    engine = create_engine(config["dsn"], connect_args={"connect_timeout": 3})
     try:
         yield sessionmaker(engine, expire_on_commit=False), engine
     finally:

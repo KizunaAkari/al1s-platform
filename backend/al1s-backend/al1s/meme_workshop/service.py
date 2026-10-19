@@ -10,9 +10,11 @@ from al1s.meme_workshop.renderer import render
 
 
 class MemeWorkshopService:
-    def __init__(self, repository: MemeRepository, assets: MemeAssets) -> None:
+    def __init__(
+        self, repository: MemeRepository, assets: MemeAssets, *, render_limit: int = 2
+    ) -> None:
         self.repository, self.assets = repository, assets
-        self.pool = RenderPool()
+        self.pool = RenderPool(render_limit)
 
     def preview(self, template: TemplateWrite, inputs: RenderInputs) -> RenderedImage:
         return self.pool.run(lambda: self._render(template, inputs))
@@ -50,12 +52,22 @@ class MemeWorkshopService:
         }
 
     def render_command(
-        self, bot_id: UUID, receipt: UUID, keyword: str, inputs: RenderInputs
+        self,
+        bot_id: UUID,
+        receipt: UUID,
+        keyword: str,
+        inputs: RenderInputs,
+        *,
+        selected_template: TemplateRecord | None = None,
     ) -> RenderedImage:
         def operation() -> RenderedImage:
             if not self.repository.receipt_available(bot_id, receipt):
                 raise ValueError("receipt_unavailable")
-            template = self._choose(keyword, inputs)
+            template = (
+                selected_template
+                if selected_template is not None
+                else self._choose(keyword, inputs)
+            )
             if template is None:
                 raise ValueError("template_not_found_or_inputs_missing")
             if not self.repository.bind_template(bot_id, receipt, template.version_id):

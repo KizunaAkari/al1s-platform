@@ -15,8 +15,8 @@ def decode_image(body: bytes) -> Image.Image:
             if max(width, height) > 4096 or width * height > MAX_PIXELS:
                 raise ValueError("图片尺寸超过4096边长或800万像素")
             image.seek(0)
-            image.load()
-            return ImageOps.exif_transpose(image).convert("RGBA")
+            ImageOps.exif_transpose(image, in_place=True)
+            return image.convert("RGBA")
     except (OSError, SyntaxError, Image.DecompressionBombError) as exc:
         raise ValueError("无法读取图片") from exc
 

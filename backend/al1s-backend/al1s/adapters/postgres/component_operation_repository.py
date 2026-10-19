@@ -24,7 +24,11 @@ def operation_record(row: Row) -> ComponentOperation:
         operation_id=row.id,
         component=row.component,
         target=ComponentTarget(
-            kind="terminal" if row.terminal_id else "platform", terminal_id=row.terminal_id
+            kind="bot"
+            if row.scope.startswith("bot:")
+            else ("terminal" if row.terminal_id else "platform"),
+            terminal_id=row.terminal_id,
+            bot_alias=row.scope[4:] if row.scope.startswith("bot:") else None,
         ),
         release_id=row.release_id,
         expected_source=row.expected_source,
@@ -39,6 +43,8 @@ def operation_record(row: Row) -> ComponentOperation:
 
 
 def active_work(session: Session, target: ComponentTarget) -> bool:
+    if target.kind == "bot":
+        return False
     executions = select(ExecutionRow.id).where(
         ExecutionRow.status.in_(("waiting", "queued", "running"))
     )
@@ -59,7 +65,7 @@ class ComponentOperationRepository:
         with self.sessions() as session:
             scopes = ["platform", target.scope]
             operations = select(Row.id).where(Row.state.in_(ACTIVE))
-            if target.kind == "terminal":
+            if target.kind in {"terminal", "bot"}:
                 operations = operations.where(Row.scope.in_(scopes))
             return bool(session.scalar(select(exists(operations))) or active_work(session, target))
 
@@ -87,7 +93,7 @@ class ComponentOperationRepository:
                         )
                     return operation_record(previous)
                 active = select(Row.id).where(Row.state.in_(ACTIVE))
-                if request.target.kind == "terminal":
+                if request.target.kind in {"terminal", "bot"}:
                     active = active.where(Row.scope.in_(["platform", request.target.scope]))
                 if session.scalar(select(exists(active))) or active_work(session, request.target):
                     raise ConflictError(
@@ -147,13 +153,19 @@ class ComponentOperationRepository:
             row.updated_at, row.row_version = now, row.row_version + 1
             return operation_record(row)
 
-    def list_operations(self, limit: int = 25, cursor: UUID | None = None) -> OperationPage:
+    def list_operations(
+        self, limit: int = 25, cursor: UUID | None = None, scope: str | None = None
+    ) -> OperationPage:
         limit = max(1, min(25, limit))
         with self.sessions() as session:
             statement = select(Row)
+            if scope is not None:
+                if scope not in {"bot:qq", "bot:discord"}:
+                    raise ValueError("invalid_bot_operation_scope")
+                statement = statement.where(Row.scope == scope)
             if cursor:
                 anchor = session.get(Row, cursor)
-                if anchor is None:
+                if anchor is None or (scope is not None and anchor.scope != scope):
                     raise NotFoundError("component_operation_cursor")
                 statement = statement.where(
                     tuple_(Row.created_at, Row.id) < (anchor.created_at, anchor.id)

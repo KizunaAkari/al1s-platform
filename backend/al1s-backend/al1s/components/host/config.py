@@ -3,6 +3,7 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from al1s.components.host.bot_deployment import BotDeploymentSettings
 from al1s.execution.host_management import HostManagerConnection
 
 
@@ -23,6 +24,9 @@ class HostSettings(BaseModel):
     listen: str = "0.0.0.0"
     port: int = Field(default=8012, ge=1024, le=65535)
     allowed_origin: str
+    bots: BotDeploymentSettings | None = None
+    qq_runtime_artifact_digest: str = ""
+    qq_runtime_version: str = ""
 
     @model_validator(mode="after")
     def registered_paths(self) -> Self:

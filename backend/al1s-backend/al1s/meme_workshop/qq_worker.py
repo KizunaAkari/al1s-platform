@@ -11,8 +11,10 @@ from websockets.asyncio.client import ClientConnection, connect
 
 from al1s.adapters.postgres.meme_settings import QqConnection
 from al1s.meme_workshop.contracts import RenderedImage, RenderInputs
+from al1s.meme_workshop.copied_mentions import CopiedMentionError, resolve_copied_targets
 from al1s.meme_workshop.media_fetch import read_media
 from al1s.meme_workshop.onebot import OneBotClient, QqMessage, parse_event
+from al1s.meme_workshop.records import TemplateRecord
 from al1s.meme_workshop.service import MemeWorkshopService
 from al1s.secrets.ports import SecretCipher
 
@@ -172,6 +174,8 @@ class QqWorker:
                     raise ValueError("render_busy")
                 async with self._slots:
                     result: RenderedImage | str = await self.generate(row, client, message, receipt)
+        except CopiedMentionError as exc:
+            error, result = exc.code, exc.reply_text
         except (TimeoutError, ValueError, OSError):
             error = "meme_input_or_render_failed"
             result = "无法生成表情, 请检查头像、单张图片和文字。发送“表情列表”查看用法。"
@@ -199,16 +203,21 @@ class QqWorker:
                 self.workshop.repository.list_templates, limit=15, enabled_only=True
             )
             return "可用表情: \n" + "\n".join(f"{item.keyword} · {item.name}" for item in templates)
+        selected, avatar_ids, texts = await self.message_targets(
+            row.service_id, receipt, client, message
+        )
+        if self._stopped:
+            raise ValueError("meme_stopped")
         urls = message.image_urls
         if not urls and message.reply_id:
             urls = await asyncio.to_thread(client.reply_images, message.reply_id)
-        if len(urls) > 1 or len(message.avatar_ids) > 4:
+        if len(urls) > 1 or len(avatar_ids) > 4:
             raise ValueError("meme_input_count")
         avatars, images = await asyncio.gather(
             asyncio.gather(
                 *(
                     asyncio.to_thread(read_media, f"https://q1.qlogo.cn/g?b=qq&nk={identity}&s=640")
-                    for identity in message.avatar_ids
+                    for identity in avatar_ids
                 )
             ),
             asyncio.gather(*(asyncio.to_thread(read_media, url) for url in urls)),
@@ -220,5 +229,51 @@ class QqWorker:
             row.service_id,
             receipt,
             message.keyword,
-            RenderInputs(list(avatars), list(images), message.texts),
+            RenderInputs(list(avatars), list(images), texts), selected_template=selected,
         )
+
+    async def message_targets(
+        self, bot_id: UUID, receipt: UUID, client: OneBotClient, message: QqMessage
+    ) -> tuple[TemplateRecord | None, list[str], list[str]]:
+        if not message.copied_target_text:
+            return None, message.avatar_ids, message.texts
+        selected: TemplateRecord | None = None
+        if message.keyword != "随机表情":
+            selected = await asyncio.to_thread(
+                self.workshop.repository.find_keyword, message.keyword
+            )
+            if selected is None:
+                raise ValueError("template_not_found")
+            if self._stopped:
+                raise ValueError("meme_stopped")
+            if not await asyncio.to_thread(
+                self.workshop.repository.bind_template, bot_id, receipt, selected.version_id
+            ):
+                raise ValueError("receipt_unavailable")
+            if self._stopped:
+                raise ValueError("meme_stopped")
+            if not await asyncio.to_thread(
+                self.workshop.repository.lease_version, selected.version_id
+            ):
+                raise ValueError("template_not_found")
+            if self._stopped:
+                raise ValueError("meme_stopped")
+        if selected is not None and not selected.layout.requirements()[0]:
+            return selected, [], message.texts
+        targets = await self.copied_targets(client, message)
+        return selected, targets, message.texts[1:]
+
+    async def copied_targets(self, client: OneBotClient, message: QqMessage) -> list[str]:
+        if self._stopped:
+            raise ValueError("meme_stopped")
+        if message.source.scope_kind != "qq_group":
+            raise CopiedMentionError("copied_targets_group_only")
+        if not message.copied_target_text or len(message.copied_target_text) > 200:
+            raise CopiedMentionError("copied_targets_invalid")
+        try:
+            members = await asyncio.to_thread(client.group_members, message.source.target_id)
+        except (ValueError, OSError) as exc:
+            raise CopiedMentionError("copied_members_unavailable") from exc
+        if self._stopped:
+            raise ValueError("meme_stopped")
+        return resolve_copied_targets(message.copied_target_text, members, message.source.sender_id)

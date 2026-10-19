@@ -46,12 +46,12 @@ from al1s.maa.quick_test_service import MaaQuickTestService
 from al1s.maa.script_command_service import MaaScriptCommandService
 from al1s.maa.strategy_command_service import MaaStrategyCommandService
 from al1s.maa.strategy_service import MaaStrategyService
+from al1s.meme_workshop.transport import MemeBackendClient
 from al1s.notifications.discord_forward_rules import DiscordForwardRuleService
 from al1s.notifications.lexicon_service import LexiconService
 from al1s.notifications.query_service import NotificationQueryService
 from al1s.notifications.review_service import ReviewService
 from al1s.notifications.service import NotificationService
-from al1s.meme_workshop.transport import MemeBackendClient
 from al1s.releases.service import ReleaseService
 
 
@@ -78,6 +78,7 @@ class PlatformServiceState:
     bot_service: BotService
     bot_runtime: BotRuntimeService
     meme_backend: MemeBackendClient
+    meme_backends: dict[str, MemeBackendClient]
     execution_resources: ExecutionResourceService
     terminal_mqtt_sessions: TerminalMqttSessionService
     maa_publication: MaaScriptPublicationService

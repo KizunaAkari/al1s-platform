@@ -30,7 +30,7 @@ def test_inventory_is_admin_only_and_internal_downloads_require_independent_host
         created_at=datetime.now(UTC),
     )
     app.state.component_releases = SimpleNamespace(
-        store=SimpleNamespace(release_object_key=lambda *_: [record])
+        store=SimpleNamespace(host_manifest=lambda *_: record)
     )
     app.include_router(router, prefix="/api/v1")
     install_admin_auth(app, settings)

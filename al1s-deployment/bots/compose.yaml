@@ -1,5 +1,14 @@
 name: al1s-bot
 
+x-meme-runtime: &meme-runtime
+  AL1S_MEME_BACKEND_TOKEN: ${AL1S_MEME_BACKEND_TOKEN:-}
+  AL1S_MEME_DATABASE_URL: ${AL1S_MEME_DATABASE_URL:-}
+  AL1S_MEME_MASTER_KEY: ${AL1S_MEME_MASTER_KEY:-}
+  AL1S_MEME_S3_ENDPOINT_URL: ${AL1S_MEME_S3_ENDPOINT_URL:-http://al1s-platform-storage-s3:8333}
+  AL1S_MEME_S3_BUCKET: ${AL1S_MEME_S3_BUCKET:-al1s-platform}
+  AL1S_MEME_S3_ACCESS_KEY: ${AL1S_MEME_S3_ACCESS_KEY:-}
+  AL1S_MEME_S3_SECRET_KEY: ${AL1S_MEME_S3_SECRET_KEY:-}
+
 x-retained-syslog: &retained-syslog
   driver: syslog
   options:
@@ -10,15 +19,18 @@ x-retained-syslog: &retained-syslog
 
 services:
   llbot:
-    image: linyuchen/llbot:${LLBOT_VERSION:-latest}
+    image: ${AL1S_QQ_BOT_IMAGE:?set verified complete QQ image}
     container_name: al1s-bot-qq
     logging: *retained-syslog
     restart: unless-stopped
     init: true
     environment:
+      <<: *meme-runtime
+      AL1S_MEME_ROLE: qq
       TZ: Asia/Shanghai
       WEBUI_PORT: 3080
       AUTO_LOGIN_QQ: ${AUTO_LOGIN_QQ:-}
+      PROTOCOL_MODE: ${AL1S_QQ_PROTOCOL_MODE:-direct}
       # QQ has its own egress setting; an empty value keeps LLBot direct.
       HTTP_PROXY: ${AL1S_QQ_HTTP_PROXY:-}
       HTTPS_PROXY: ${AL1S_QQ_HTTP_PROXY:-}
@@ -35,8 +47,10 @@ services:
         aliases: [al1s-llbot]
     healthcheck:
       test:
-        - CMD-SHELL
-        - node -e "fetch('http://127.0.0.1:'+(process.env.WEBUI_PORT||3080)).then(()=>process.exit(0),()=>process.exit(1))"
+        - CMD
+        - python
+        - -m
+        - al1s.meme_workshop.healthcheck
       interval: 30s
       timeout: 10s
       retries: 3
@@ -52,6 +66,8 @@ services:
     restart: unless-stopped
     init: true
     environment:
+      <<: *meme-runtime
+      AL1S_MEME_ROLE: discord
       TZ: Asia/Shanghai
       AL1S_CONTROL_BASE_URL: ${AL1S_CONTROL_BASE_URL:-http://backend:8000}
       AL1S_BOT_STATE_DIR: /var/lib/al1s-plachta
@@ -61,13 +77,6 @@ services:
       HEALTH_PORT: 3100
       AL1S_BOT_HTTP_PROXY: ${AL1S_BOT_HTTP_PROXY:-}
       AL1S_BOT_NO_PROXY: ${AL1S_BOT_NO_PROXY:-localhost,127.0.0.1,backend,al1s-platform-app,al1s-llbot}
-      AL1S_MEME_BACKEND_TOKEN: ${AL1S_MEME_BACKEND_TOKEN:-}
-      AL1S_MEME_DATABASE_URL: ${AL1S_MEME_DATABASE_URL:-}
-      AL1S_MEME_MASTER_KEY: ${AL1S_MEME_MASTER_KEY:-}
-      AL1S_MEME_S3_ENDPOINT_URL: ${AL1S_MEME_S3_ENDPOINT_URL:-http://al1s-platform-storage-s3:8333}
-      AL1S_MEME_S3_BUCKET: ${AL1S_MEME_S3_BUCKET:-al1s-platform}
-      AL1S_MEME_S3_ACCESS_KEY: ${AL1S_MEME_S3_ACCESS_KEY:-}
-      AL1S_MEME_S3_SECRET_KEY: ${AL1S_MEME_S3_SECRET_KEY:-}
     volumes:
       - discord-worker-state:/var/lib/al1s-plachta
     extra_hosts:

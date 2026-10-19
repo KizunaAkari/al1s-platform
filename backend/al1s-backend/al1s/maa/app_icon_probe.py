@@ -56,10 +56,10 @@ async def fetch_application_icon(
             compression=None,
         ) as upstream:
             await asyncio.wait_for(upstream.send(package_name.encode("ascii")), 3)
-            payload = await asyncio.wait_for(upstream.recv(), 20)
-        if not isinstance(payload, bytes):
+            received = await asyncio.wait_for(upstream.recv(), 20)
+        if not isinstance(received, bytes):
             return None
-        return normalize_icon(payload)
+        return normalize_icon(received)
     except Exception as exc:
         logger.warning("Optional application icon probe failed: %s", type(exc).__name__)
         return None
