@@ -63,8 +63,10 @@ def test_result_query_requires_admin_and_never_returns_raw_diagnostics():
     from datetime import UTC, datetime
 
     app = FastAPI()
+    app.state.services = SimpleNamespace()
     settings = Settings(admin_password="test-admin-password", admin_cookie_secure=False)
     app.state.settings = settings
+    app.state.services.settings = app.state.settings
     install_admin_auth(app, settings)
     app.include_router(router, prefix="/api/v1/maa")
     script_id, session_id = uuid4(), uuid4()
@@ -74,8 +76,8 @@ def test_result_query_requires_admin_and_never_returns_raw_diagnostics():
         completed_at=datetime.now(UTC), definition={"manifest": {}},
         started_at=None, cancel_requested_at=None,
     )
-    app.state.maa_quick_tests = Mock()
-    app.state.maa_quick_tests.get_detail.return_value = SimpleNamespace(
+    app.state.services.maa_quick_tests = Mock()
+    app.state.services.maa_quick_tests.get_detail.return_value = SimpleNamespace(
         session=session, receipt=SimpleNamespace(
             status="failed", error_code="recognition_failed",
             diagnostic={"failed_step": {"number": 2}, "private_payload": "not-for-browser"},
@@ -86,7 +88,7 @@ def test_result_query_requires_admin_and_never_returns_raw_diagnostics():
     assert client.get(url).status_code == 401
     assert client.post(url + "/stop", headers={"X-AL1S-CSRF": "1"}).status_code == 401
     assert client.get(url + "/events").status_code == 401
-    app.state.maa_quick_tests.get_detail.assert_not_called()
+    app.state.services.maa_quick_tests.get_detail.assert_not_called()
     assert client.post("/api/v1/auth/login", headers={"X-AL1S-CSRF": "1"},
                        json={"password": "test-admin-password"}).status_code == 200
     response = client.get(url)
@@ -99,7 +101,7 @@ def test_result_query_requires_admin_and_never_returns_raw_diagnostics():
     session.definition["manifest"].update({"debug_step_number": 7, "definitions": {"entry": {
         "script_name": "开始脚本", "steps": [{}], "independent_rules": [{"name": "通知"}],
     }}})
-    app.state.maa_quick_tests.get_detail.return_value.receipt.diagnostic.update({
+    app.state.services.maa_quick_tests.get_detail.return_value.receipt.diagnostic.update({
         "definition_key": "entry", "recognition_failure": {
             "step_index": 0, "rule_index": 0, "stage": "click_target",
             "algorithm": "TemplateMatch", "best_score": 0.84406, "threshold": 0.85,
@@ -111,20 +113,20 @@ def test_result_query_requires_admin_and_never_returns_raw_diagnostics():
     assert projected.json()["failure_detail"]["rule_name"] == "通知"
     assert projected.json()["failed_step_number"] == 7
     assert "not-for-browser" not in projected.text
-    app.state.maa_quick_tests.request_cancel.return_value = session
+    app.state.services.maa_quick_tests.request_cancel.return_value = session
     stopped = client.post(url + "/stop", headers={"X-AL1S-CSRF": "1"})
     assert stopped.status_code == 200
-    app.state.maa_quick_tests.request_cancel.assert_called_once_with(
+    app.state.services.maa_quick_tests.request_cancel.assert_called_once_with(
         script_id=script_id, session_id=session_id
     )
-    app.state.maa_quick_tests.list_events.return_value = [SimpleNamespace(
+    app.state.services.maa_quick_tests.list_events.return_value = [SimpleNamespace(
         sequence=1, kind="started", step_number=None, code=None,
         created_at=datetime.now(UTC),
     )]
     events = client.get(url + "/events")
     assert events.status_code == 200
     assert events.json()["items"][0]["kind"] == "started"
-    app.state.maa_quick_tests.list_events.return_value = [SimpleNamespace(
+    app.state.services.maa_quick_tests.list_events.return_value = [SimpleNamespace(
         sequence=2, kind="log", step_number=None, code="maa_rule_started:entry:0",
         rule_name="通知", created_at=datetime.now(UTC),
     )]

@@ -19,6 +19,7 @@ from al1s.adapters.postgres.blob_transfer_unit_of_work import (
     TerminalBlobSqlAlchemyUnitOfWork,
 )
 from al1s.adapters.postgres.bot_unit_of_work import BotSqlAlchemyUnitOfWork
+from al1s.adapters.postgres.device_path_repository import DevicePathTransaction
 from al1s.adapters.postgres.discord_forward_rules import DiscordForwardRuleRepository
 from al1s.adapters.postgres.editor_repository import EditorSqlTransaction
 from al1s.adapters.postgres.execution_unit_of_work import ExecutionSqlAlchemyUnitOfWork
@@ -39,6 +40,7 @@ from al1s.adapters.postgres.repositories import PostgresKernelMaintenanceReader
 from al1s.adapters.postgres.scheduling_unit_of_work import (
     SchedulingSqlAlchemyUnitOfWork,
 )
+from al1s.adapters.postgres.setup_check_repository import SetupCheckRepository
 from al1s.adapters.postgres.storage_gc_repository import PostgresStorageGcRepository
 from al1s.adapters.s3.blob_store import S3BlobStore
 from al1s.android_demo.definition_provider import AndroidDemoExecutionDefinitionProvider
@@ -57,12 +59,14 @@ from al1s.bots.ports import BotUnitOfWork
 from al1s.bots.runtime_connection import BotConnectionReader
 from al1s.bots.runtime_status import BotRuntimeService
 from al1s.bots.service import BotService
+from al1s.execution.android_editor_transport import AndroidEditorHub
 from al1s.execution.artifact_upload_ports import ArtifactUploadUnitOfWork
 from al1s.execution.artifact_upload_service import ArtifactUploadService
 from al1s.execution.blob_transfer import TerminalBlobTransferService
 from al1s.execution.blob_transfer_ports import TerminalBlobUnitOfWork
 from al1s.execution.definitions import ExecutionDefinitionRegistry
 from al1s.execution.delivery_service import TerminalDeliveryService
+from al1s.execution.device_path_service import DevicePathService
 from al1s.execution.editor_service import EditorSessionService
 from al1s.execution.errors import ExecutionDomainError
 from al1s.execution.failure_review_service import FailureReviewService
@@ -79,6 +83,7 @@ from al1s.execution.scheduling_service import (
     SchedulingUowFactory,
 )
 from al1s.execution.services import ExecutionResourceService, UowFactory
+from al1s.execution.terminal_setup_checks import TerminalSetupCheckService
 from al1s.infrastructure.database import (
     create_batch_session_factory,
     create_database_engine,
@@ -151,6 +156,11 @@ def _install_notification_services(
     services.gateway_probe = GatewayProbe(bot_uow_factory, platform_cipher)
     services.editor_sessions = EditorSessionService(
         lambda: EditorSqlTransaction(session_factory), platform_cipher
+    )
+    services.android_editor_hub = AndroidEditorHub()
+    services.device_paths = DevicePathService(lambda: DevicePathTransaction(session_factory))
+    services.terminal_setup_checks = TerminalSetupCheckService(
+        SetupCheckRepository(session_factory)
     )
     services.notification_commands = notification_service or NotificationService(
         notification_uow_factory,
@@ -266,6 +276,11 @@ def _install_blob_services(
         ReleaseRepository(session_factory),
         release_blob_store,
     )
+    from al1s.app.component_services import component_services
+
+    (services.component_inventory, services.component_releases, services.component_upgrades) = (
+        component_services(settings, session_factory, release_blob_store, services.host_maintenance)
+    )
     owned_blob_store: S3BlobStore | None = None
     if (
         maa_archive_import_command_service is None
@@ -300,6 +315,24 @@ def _install_blob_services(
         PostgresQuickTestMedia(session_factory),
         owned_blob_store,
     )
+    from al1s.meme_workshop.transport import MemeBackendClient
+
+    services.meme_backend = MemeBackendClient(
+        settings.meme_backend_url,
+        settings.meme_backend_token.get_secret_value(),
+    )
+    services.meme_backends = {
+        "discord": MemeBackendClient(
+            settings.meme_backend_url,
+            settings.meme_backend_token.get_secret_value(),
+            expected_role="discord",
+        ),
+        "qq": MemeBackendClient(
+            settings.meme_qq_backend_url,
+            settings.meme_backend_token.get_secret_value(),
+            expected_role="qq",
+        ),
+    }
     services.lineup = LineupService(
         LineupRepository(session_factory),
         LineupImages(maa_uow_factory, owned_blob_store),
@@ -357,6 +390,7 @@ def _install_scheduling_services(
             lambda: SchedulingSqlAlchemyUnitOfWork(session_factory),
         ),
         definitions,
+        device_paths=services.device_paths,
     )
     services.terminal_delivery = terminal_delivery_service or TerminalDeliveryService(
         cast(

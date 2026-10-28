@@ -14,6 +14,7 @@ from al1s.execution.editor_sessions import EditorStatus
 @pytest.fixture
 def client(monkeypatch):
     app = FastAPI()
+    app.state.services = SimpleNamespace()
     app.include_router(editor_ocr.router, prefix="/api/v1")
     settings = SimpleNamespace(
         admin_password=SecretStr("editor-test-password"),
@@ -21,8 +22,9 @@ def client(monkeypatch):
         admin_cookie_secure=False,
     )
     app.state.settings = settings
+    app.state.services.settings = app.state.settings
     install_admin_auth(app, settings)
-    app.state.editor_sessions = SimpleNamespace(
+    app.state.services.editor_sessions = SimpleNamespace(
         detail=lambda _: (
             SimpleNamespace(status=EditorStatus.ACTIVE),
             {"ocr_ws_url": "wss://terminal:8766/scrcpy/token/ocr"},

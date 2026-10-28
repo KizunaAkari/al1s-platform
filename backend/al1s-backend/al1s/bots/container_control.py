@@ -1,4 +1,5 @@
 """Restricted Docker operations. Never return raw inspect data or execute a shell."""
+
 from __future__ import annotations
 
 import hashlib
@@ -6,10 +7,13 @@ import http.client
 import json
 import re
 import socket
+from contextlib import ExitStack
 from threading import Lock
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from al1s.components.host.bot_maintenance import BotMaintenanceGuard
 
 Alias = Literal["qq", "discord"]
 Action = Literal["start", "stop", "restart"]
@@ -53,16 +57,25 @@ class UnixConnection(http.client.HTTPConnection):
 
 
 class DockerControl:
-    def __init__(self, targets: dict[str, str], socket_path: str, version: str = "1.45"):
+    def __init__(
+        self,
+        targets: dict[str, str],
+        socket_path: str,
+        version: str = "1.45",
+        *,
+        maintenance: BotMaintenanceGuard | None = None,
+    ):
         if not targets or set(targets) - {"qq", "discord"}:
             raise ValueError("invalid_control_aliases")
-        if any(not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}", x)
-               for x in targets.values()) or not re.fullmatch(r"1\.\d{2,3}", version):
+        if any(
+            not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}", x) for x in targets.values()
+        ) or not re.fullmatch(r"1\.\d{2,3}", version):
             raise ValueError("invalid_control_configuration")
         if len(set(targets.values())) != len(targets):
             raise ValueError("duplicate_control_target")
         self.targets, self.socket_path, self.version = targets, socket_path, version
         self.locks = {alias: Lock() for alias in targets}
+        self.maintenance = maintenance
 
     def _request(self, method: str, target: str, suffix: str) -> dict[str, object]:
         connection = UnixConnection(self.socket_path)
@@ -97,15 +110,20 @@ class DockerControl:
             raise ControlError("invalid_docker_identity", 502)
         health = state.get("Health", {})
         fields = {
-            "instance_id": identity, "running": state["Running"],
+            "instance_id": identity,
+            "running": state["Running"],
             "status": str(state.get("Status", "unknown")),
             "started_at": str(state.get("StartedAt", "")),
             "finished_at": str(state.get("FinishedAt", "")),
         }
         revision = hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
         return ContainerState(
-            alias=alias, health=str(health.get("Status", "not_configured"))
-            if isinstance(health, dict) else "unknown", revision=revision, **fields,
+            alias=alias,
+            health=str(health.get("Status", "not_configured"))
+            if isinstance(health, dict)
+            else "unknown",
+            revision=revision,
+            **fields,
         )
 
     def command(self, alias: Alias, command: ContainerCommand) -> ContainerState:
@@ -113,7 +131,13 @@ class DockerControl:
             raise ControlError("container_not_registered", 404)
         if not self.locks[alias].acquire(blocking=False):
             raise ControlError("container_operation_in_progress", 409)
+        owned = ExitStack()
         try:
+            if self.maintenance is not None:
+                try:
+                    owned.enter_context(self.maintenance.exclusive(alias))
+                except (OSError, ValueError):
+                    raise ControlError("bot_maintenance_in_progress", 409) from None
             before = self.state(alias)
             if before.revision != command.revision:
                 raise ControlError("container_state_changed_refresh_required", 409)
@@ -132,4 +156,5 @@ class DockerControl:
                 raise ControlError("container_restart_unconfirmed", 409)
             return after
         finally:
+            owned.close()
             self.locks[alias].release()

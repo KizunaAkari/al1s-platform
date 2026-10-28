@@ -26,8 +26,8 @@ class EditorTransaction(Protocol):
     ) -> None: ...
     def target_terminal(self, device_id: UUID, *, lock: bool = False) -> UUID: ...
     def by_request(self, request_id: UUID) -> EditorSession | None: ...
-    def by_device(self, device_id: UUID) -> EditorSession | None: ...
-    def get(self, session_id: UUID) -> EditorSession: ...
+    def by_device(self, device_id: UUID, *, lock: bool = True) -> EditorSession | None: ...
+    def get(self, session_id: UUID, *, lock: bool = True) -> EditorSession: ...
     def put(self, session: EditorSession, previous: EditorSession | None) -> None: ...
     def pending(self, terminal_id: UUID, limit: int) -> tuple[EditorSession, ...]: ...
 
@@ -75,23 +75,30 @@ class EditorSessionService:
         """Find only the device's editor lease; never cancel a formal task."""
         with self._transactions() as tx:
             terminal_id = tx.target_terminal(device_id)
-            session = tx.by_device(device_id)
+            session = tx.by_device(device_id, lock=False)
             if session is None or session.terminal_id != terminal_id:
                 return None
-            current = expire_pending(session, self._clock())
-            tx.put(current, session)
+            current = self._expire(tx, session)
             return current if current.status in {
                 EditorStatus.PENDING, EditorStatus.ACTIVE, EditorStatus.CLOSING,
             } else None
 
     def detail(self, session_id: UUID) -> tuple[EditorSession, dict[str, str] | None]:
         with self._transactions() as tx:
-            session = tx.get(session_id)
+            session = tx.get(session_id, lock=False)
             if tx.target_terminal(session.device_id) != session.terminal_id:
                 raise NotFoundError("editor_session")
-            current = expire_pending(session, self._clock())
-            tx.put(current, session)
+            current = self._expire(tx, session)
             return current, open_connection(current, self._cipher)
+
+    def _expire(self, tx: EditorTransaction, session: EditorSession) -> EditorSession:
+        if expire_pending(session, self._clock()) == session:
+            return session
+        # A concurrent activation/close can finish while waiting for the lock.
+        latest = tx.get(session.session_id)
+        current = expire_pending(latest, self._clock())
+        tx.put(current, latest)
+        return current
 
     def close(self, session_id: UUID) -> EditorSession:
         with self._transactions() as tx:
@@ -115,16 +122,20 @@ class EditorSessionService:
         connection: dict[str, str] | None,
     ) -> EditorSession:
         with self._transactions() as tx:
-            session = tx.get(session_id)
-            if session.terminal_id != terminal_id:
-                raise NotFoundError("editor_session")
-            if (
-                status is EditorStatus.ACTIVE
-                and tx.target_terminal(session.device_id) != terminal_id
-            ):
-                raise NotFoundError("editor_session")
-            current = report_session(
-                session, terminal_id, instance_id, status, self._clock(), self._cipher, connection
-            )
-            tx.put(current, session)
-            return current
+            for lock in (False, True):
+                session = tx.get(session_id, lock=lock)
+                if session.terminal_id != terminal_id:
+                    raise NotFoundError("editor_session")
+                if (status is EditorStatus.ACTIVE
+                        and tx.target_terminal(session.device_id) != terminal_id):
+                    raise NotFoundError("editor_session")
+                current = report_session(
+                    session, terminal_id, instance_id, status, self._clock(),
+                    self._cipher, connection,
+                )
+                if current == session:
+                    return current
+                if lock:
+                    tx.put(current, session)
+                    return current
+        raise AssertionError("editor transition did not complete")

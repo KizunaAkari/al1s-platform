@@ -1,0 +1,61 @@
+# Added only after the registered current images are written to component-images.env.
+# Existing Compose project/container/data identities remain defined by the original files.
+services:
+  component-maintenance:
+    container_name: al1s-platform-component-maintenance
+    image: ${AL1S_COMPONENT_MAINTENANCE_IMAGE:?register verified maintenance image}
+    command: ["python", "-m", "al1s.components.host", "--config", "${AL1S_COMPONENT_CONFIG:?register container config}"]
+    environment:
+      AL1S_COMPONENT_CONFIG: ${AL1S_COMPONENT_CONFIG}
+      # Use the same absolute directory in this container and the Docker engine.
+      AL1S_COMPONENT_DEPLOYMENT_SOURCE: ${AL1S_COMPONENT_ROOT:?register engine deployment root}
+      AL1S_HOST_MANAGER_CA_DIR: ${AL1S_COMPONENT_ROOT}/packages/linux/host-manager-public
+    group_add: ["${AL1S_DOCKER_SOCKET_GID:?set the host Docker socket group}"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - type: bind
+        source: ${AL1S_COMPONENT_DEPLOYMENT_SOURCE:?register existing deployment directory}
+        target: ${AL1S_COMPONENT_ROOT}
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    networks: [control]
+    restart: unless-stopped
+    logging:
+      driver: syslog
+      options:
+        syslog-address: udp://host.docker.internal:15144
+        syslog-format: rfc5424micro
+        tag: "al1s/{{.Name}}"
+        cache-disabled: "true"
+  backend:
+    image: ${AL1S_COMPONENT_PLATFORM_IMAGE:?register current platform image}
+    environment:
+      AL1S_COMPONENT_HOST: ${AL1S_COMPONENT_HOST:?register independent component executor}
+  migrate:
+    image: ${AL1S_COMPONENT_PLATFORM_IMAGE:?register current platform image}
+  s3-init:
+    image: ${AL1S_COMPONENT_PLATFORM_IMAGE:?register current platform image}
+  log-collector:
+    image: ${AL1S_COMPONENT_PLATFORM_IMAGE:?register current platform image}
+  postgres:
+    image: ${AL1S_COMPONENT_POSTGRES_IMAGE:?register current PostgreSQL image}
+  seaweed-master:
+    image: ${AL1S_COMPONENT_S3_IMAGE:?register current SeaweedFS image}
+  seaweed-volume:
+    image: ${AL1S_COMPONENT_S3_IMAGE:?register current SeaweedFS image}
+  seaweed-filer:
+    image: ${AL1S_COMPONENT_S3_IMAGE:?register current SeaweedFS image}
+  seaweed-s3:
+    image: ${AL1S_COMPONENT_S3_IMAGE:?register current SeaweedFS image}
+  mosquitto:
+    image: ${AL1S_COMPONENT_MQTT_IMAGE:?register current MQTT image}
+  tls-gateway:
+    networks:
+      control:
+        aliases: ["${AL1S_COMPONENT_PLATFORM_HOSTNAME:?register platform certificate hostname}"]
+    volumes:
+      - ./tls/generated/ca.crt:/etc/al1s/tls/component-ca.crt:ro

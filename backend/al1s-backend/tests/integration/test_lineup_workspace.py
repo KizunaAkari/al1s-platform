@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -19,7 +20,12 @@ from al1s.execution.scheduling_service import ExecutionSchedulingService
 from al1s.execution.scheduling_types import ExecutionResult
 from al1s.lineup.batch_definition import LineupBatchDefinitionProvider
 from al1s.lineup.catalog import catalog
-from tests.integration.execution_support import _prepare_terminal, _services
+from tests.integration.execution_support import (
+    _complete_attempt,
+    _prepare_terminal,
+    _services,
+    _start_attempt,
+)
 from tests.integration.execution_support import clean_tables as clean_tables
 from tests.integration.execution_support import engine as engine
 
@@ -102,9 +108,8 @@ def test_batch_is_one_task_and_advances_after_each_failure_then_settles(engine):
         items = scheduling.materialize_due(worker_id=uuid4(), correlation_id=uuid4())
         assert len(items) == 1 and items[0].occurrence.ordinal == index + 1
         assert scheduling.materialize_due(worker_id=uuid4(), correlation_id=uuid4()) == []
-        scheduling.start_attempt(items[0].attempt.attempt_id, correlation_id=uuid4())
-        scheduling.complete_attempt(
-            items[0].attempt.attempt_id,
+        _start_attempt(engine, None, items[0].attempt.attempt_id, correlation_id=uuid4())
+        _complete_attempt(engine, None, items[0].attempt.attempt_id,
             result=ExecutionResult.FAILURE,
             error_code="lineup_test_failure",
             retryable=False,
@@ -125,9 +130,8 @@ def test_failed_annotation_cas_and_retry_skips_manually_resolved_images(engine):
     original = commands.create(ids, terminal, {}, "original")
     for _ in ids:
         item = scheduling.materialize_due(worker_id=uuid4(), correlation_id=uuid4())[0]
-        scheduling.start_attempt(item.attempt.attempt_id, correlation_id=uuid4())
-        scheduling.complete_attempt(
-            item.attempt.attempt_id,
+        _start_attempt(engine, None, item.attempt.attempt_id, correlation_id=uuid4())
+        _complete_attempt(engine, None, item.attempt.attempt_id,
             result=ExecutionResult.FAILURE,
             error_code="failed",
             retryable=False,
@@ -181,9 +185,8 @@ def test_cancel_between_images_cancels_remaining_without_rewriting_failed_image(
     sessions, terminal, ids, scheduling = setup(engine)
     task_id = LineupBatchCommands(sessions).create(ids, terminal, {}, "cancel-batch")
     item = scheduling.materialize_due(worker_id=uuid4(), correlation_id=uuid4())[0]
-    scheduling.start_attempt(item.attempt.attempt_id, correlation_id=uuid4())
-    scheduling.complete_attempt(
-        item.attempt.attempt_id,
+    _start_attempt(engine, None, item.attempt.attempt_id, correlation_id=uuid4())
+    _complete_attempt(engine, None, item.attempt.attempt_id,
         result=ExecutionResult.FAILURE,
         error_code="failed",
         retryable=False,
@@ -268,10 +271,11 @@ def test_http_upload_single_parent_annotation_ownership_and_export(engine):
         ),
         readiness_service=Ready(),
     )
+    app.state.services = SimpleNamespace()
 
     async def exercise():
         async with app.router.lifespan_context(app):
-            app.state.lineup.images.store = Store()
+            app.state.services.lineup.images.store = Store()
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app),
                 base_url="http://test",
@@ -345,8 +349,8 @@ def test_annotation_task_cursor_pages_without_duplicates(engine):
     keys = {commands.create([record], terminal, {}, f"selector-{i}")
             for i, record in enumerate(ids)}
     for item in scheduling.materialize_due(worker_id=uuid4(), correlation_id=uuid4()):
-        scheduling.start_attempt(item.attempt.attempt_id, correlation_id=uuid4())
-        scheduling.complete_attempt(item.attempt.attempt_id, result=ExecutionResult.FAILURE,
+        _start_attempt(engine, None, item.attempt.attempt_id, correlation_id=uuid4())
+        _complete_attempt(engine, None, item.attempt.attempt_id, result=ExecutionResult.FAILURE,
                                     error_code="failed", retryable=False, correlation_id=uuid4())
     queries = LineupWorkspaceQueries(sessions)
     first = queries.annotation_tasks()

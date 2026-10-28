@@ -1,3 +1,4 @@
+export type WorkerIdentity = { credential_sha256: string; service_id: string }
 export class HealthState {
   private readonly startedAt = new Date().toISOString();
   private discordReady = false;
@@ -54,9 +55,10 @@ export class HealthState {
     return this.discordReady && !this.shuttingDown;
   }
 
-  public snapshot(): Record<string, unknown> {
+  public snapshot(identity: WorkerIdentity | null = null): Record<string, unknown> {
     return {
       status: this.shuttingDown ? "stopping" : this.discordReady ? "ready" : "starting",
+      identity,
       startedAt: this.startedAt,
       discordReady: this.discordReady,
       gatewayPingMs: this.gatewayPingMs,

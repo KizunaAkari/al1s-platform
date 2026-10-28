@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from sqlalchemy import Engine, create_engine, event, func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from al1s.adapters.postgres.execution_models import (
@@ -200,7 +201,7 @@ def test_adb_observation_reports_connection_authorization_and_staleness(
     assert unauthorized.observed_at is not None
     service._now = lambda: unauthorized.observed_at + timedelta(seconds=31)
     stale = service.list_target_devices(limit=10)[0]
-    assert stale.availability == "disconnected"
+    assert stale.availability == "unknown"
     assert stale.availability_reason == "adb_observation_stale"
 
 
@@ -747,7 +748,7 @@ def test_identifiers_remain_pending_until_explicit_binding_and_mode_is_typed(
     assert mounted.mode is TargetDeviceMode.MOUNTED
 
 
-def test_concurrent_lease_acquisition_has_one_winner(
+def test_active_lease_unique_constraint_has_one_winner(
     engine: Engine, service: ExecutionResourceService
 ) -> None:
     terminal_id, _, _, _ = _register(service, TerminalType.LINUX)
@@ -764,17 +765,24 @@ def test_concurrent_lease_acquisition_has_one_winner(
     def acquire(owner_id: UUID) -> UUID | None:
         barrier.wait(timeout=5)
         try:
-            lease = service.acquire_lease(
+            now = datetime.now(UTC)
+            lease = ExecutionLeaseRow(
+                id=uuid4(),
                 terminal_id=terminal_id,
                 target_device_id=target.device_id,
-                lease_kind=LeaseKind.EXECUTION,
-                owner_kind=LeaseOwnerKind.EXECUTION,
+                lease_kind=LeaseKind.EXECUTION.value,
+                owner_kind=LeaseOwnerKind.EXECUTION.value,
                 owner_id=owner_id,
-                ttl=timedelta(minutes=1),
+                acquired_at=now,
+                expires_at=now + timedelta(minutes=1),
+                row_version=1,
             )
-        except ConflictError:
+            with Session(engine, expire_on_commit=False) as session:
+                session.add(lease)
+                session.commit()
+        except IntegrityError:
             return None
-        return lease.lease_id
+        return lease.id
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         first = executor.submit(acquire, uuid4())

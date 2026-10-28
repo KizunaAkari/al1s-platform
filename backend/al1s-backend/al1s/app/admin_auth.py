@@ -68,6 +68,7 @@ def device_route(path: str) -> bool:
     # These endpoints perform their own credential/grant validation.
     return (
         path.startswith("/api/v1/terminal/")
+        or path.startswith("/api/v1/components/internal/")
         or path.startswith("/api/v1/bots/worker/")
         or path in {
             "/api/v1/terminals/register", "/api/v1/bots/workers/register",

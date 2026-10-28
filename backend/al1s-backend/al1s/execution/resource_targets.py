@@ -359,7 +359,8 @@ class TargetDeviceOperations(ResourceServiceBase):
             if uow.target_devices.has_pending_control(device_id, target.managing_terminal_id):
                 raise ConflictError(
                     "target_control_pending",
-                    "Finish outstanding tasks, offline permits and editor sessions before handoff",
+                    "Coordinated input authority, tasks, permits and editor sessions "
+                    "must be released before changing execution subject",
                 )
             manager_ids = self._lock_and_validate_target_managers(
                 uow,
@@ -428,7 +429,7 @@ class TargetDeviceOperations(ResourceServiceBase):
         observation: tuple[str | None, str | None, datetime | None] | None,
         now: datetime,
     ) -> TargetDeviceRecord:
-        if device.mode is not TargetDeviceMode.MOUNTED:
+        if device.mode not in {TargetDeviceMode.MOUNTED,TargetDeviceMode.STANDALONE}:
             return replace(device, availability_reason="not_mounted")
         terminal_status, adb_state, observed_at = observation or (None, None, None)
         if terminal_status != TerminalServiceStatus.ONLINE.value:
@@ -438,7 +439,7 @@ class TargetDeviceOperations(ResourceServiceBase):
         if observed_at < now - timedelta(seconds=30):
             return replace(
                 device,
-                availability="disconnected",
+                availability="unknown",
                 availability_reason="adb_observation_stale",
                 availability_observed_at=observed_at,
             )

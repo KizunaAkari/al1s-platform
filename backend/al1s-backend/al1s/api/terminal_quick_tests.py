@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from al1s.api.terminal_auth import authenticated_terminal_id
 from al1s.app.service_state import service_state
+from al1s.execution.package_builder import canonical_package_text
 from al1s.execution.scheduling_types import ResolvedExecutionDefinition
 from al1s.maa.quick_test_service import MaaQuickTestService
 from al1s.maa.types import QuickTestEventRecord, QuickTestSessionRecord, QuickTestSessionStatus
@@ -37,6 +38,7 @@ class TerminalQuickTestDefinition(BaseModel):
     schema_version: int
     manifest_hash: str
     manifest: dict[str, Any]
+    canonical_manifest: str
     capability_requirements: dict[str, Any]
     blobs: list[dict[str, Any]]
 
@@ -145,6 +147,7 @@ def _definition(definition: ResolvedExecutionDefinition) -> TerminalQuickTestDef
         schema_version=definition.schema_version,
         manifest_hash=definition.manifest_hash,
         manifest=definition.manifest,
+        canonical_manifest=canonical_package_text(definition.manifest),
         capability_requirements={
             "schema_version": requirements.schema_version,
             "min_protocol_version": requirements.min_protocol_version,

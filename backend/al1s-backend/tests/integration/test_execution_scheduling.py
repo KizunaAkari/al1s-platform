@@ -41,10 +41,12 @@ from al1s.execution.scheduling_types import (
 from al1s.infrastructure.readiness import ReadinessResult
 from tests.integration.execution_support import (
     FakeDefinitionProvider,
+    _complete_attempt,
     _loop_command,
     _prepare_terminal,
     _services,
     _single_command,
+    _start_attempt,
     _timed_command,
 )
 from tests.integration.execution_support import (
@@ -99,9 +101,8 @@ def test_loop_materialization_retries_same_snapshot_then_opens_next_occurrence(
     assert len(first_batch) == 1
     assert scheduling.materialize_due(worker_id=uuid4(), correlation_id=uuid4()) == []
     first = first_batch[0]
-    scheduling.start_attempt(first.attempt.attempt_id, correlation_id=uuid4())
-    failed = scheduling.complete_attempt(
-        first.attempt.attempt_id,
+    _start_attempt(engine, clock, first.attempt.attempt_id, correlation_id=uuid4())
+    failed = _complete_attempt(engine, clock, first.attempt.attempt_id,
         result=ExecutionResult.FAILURE,
         error_code="image_not_found",
         retryable=True,
@@ -111,9 +112,8 @@ def test_loop_materialization_retries_same_snapshot_then_opens_next_occurrence(
     retrying_summary = scheduling.list_active_schedules(limit=100)[0]
     assert retrying_summary.schedule.settled_occurrences == 0
     provider.revision_id = "revision-2"
-    scheduling.start_attempt(failed.retry_attempt.attempt_id, correlation_id=uuid4())
-    scheduling.complete_attempt(
-        failed.retry_attempt.attempt_id,
+    _start_attempt(engine, clock, failed.retry_attempt.attempt_id, correlation_id=uuid4())
+    _complete_attempt(engine, clock, failed.retry_attempt.attempt_id,
         result=ExecutionResult.SUCCESS,
         error_code=None,
         retryable=False,
@@ -126,9 +126,8 @@ def test_loop_materialization_retries_same_snapshot_then_opens_next_occurrence(
     second_batch = scheduling.materialize_due(worker_id=uuid4(), correlation_id=uuid4())
     assert len(second_batch) == 1
     second = second_batch[0]
-    scheduling.start_attempt(second.attempt.attempt_id, correlation_id=uuid4())
-    scheduling.complete_attempt(
-        second.attempt.attempt_id,
+    _start_attempt(engine, clock, second.attempt.attempt_id, correlation_id=uuid4())
+    _complete_attempt(engine, clock, second.attempt.attempt_id,
         result=ExecutionResult.SUCCESS,
         error_code=None,
         retryable=False,
@@ -165,14 +164,13 @@ def test_pause_and_terminate_do_not_retry_the_running_attempt(engine: Engine) ->
     )
     assert paused_task.schedule is not None
     paused_execution = scheduling.materialize_due(worker_id=uuid4(), correlation_id=uuid4())[0]
-    scheduling.start_attempt(paused_execution.attempt.attempt_id, correlation_id=uuid4())
+    _start_attempt(engine, clock, paused_execution.attempt.attempt_id, correlation_id=uuid4())
     paused_schedule = scheduling.pause_schedule(
         paused_task.schedule.schedule_id,
         expected_version=paused_task.schedule.row_version,
         correlation_id=uuid4(),
     )
-    paused_completion = scheduling.complete_attempt(
-        paused_execution.attempt.attempt_id,
+    paused_completion = _complete_attempt(engine, clock, paused_execution.attempt.attempt_id,
         result=ExecutionResult.FAILURE,
         error_code="retryable_failure",
         retryable=True,
@@ -187,15 +185,15 @@ def test_pause_and_terminate_do_not_retry_the_running_attempt(engine: Engine) ->
     )
     assert terminated_task.schedule is not None
     terminated_execution = scheduling.materialize_due(worker_id=uuid4(), correlation_id=uuid4())[0]
-    scheduling.start_attempt(terminated_execution.attempt.attempt_id, correlation_id=uuid4())
+    _start_attempt(engine, clock, terminated_execution.attempt.attempt_id, correlation_id=uuid4())
     terminating = scheduling.terminate_schedule(
         terminated_task.schedule.schedule_id,
         expected_version=terminated_task.schedule.row_version,
         correlation_id=uuid4(),
     )
     assert terminating.status is ScheduleStatus.TERMINATING
-    terminated_completion = scheduling.complete_attempt(
-        terminated_execution.attempt.attempt_id,
+    terminated_completion = _complete_attempt(
+        engine, clock, terminated_execution.attempt.attempt_id,
         result=ExecutionResult.FAILURE,
         error_code="retryable_failure",
         retryable=True,
@@ -405,9 +403,8 @@ def test_original_snapshot_retry_creates_new_task_and_keeps_failed_history(
             RetryOriginalSnapshotCommand(idempotency_key="retry-too-early"),
             correlation_id=uuid4(),
         )
-    scheduling.start_attempt(source.attempt.attempt_id, correlation_id=uuid4())
-    scheduling.complete_attempt(
-        source.attempt.attempt_id,
+    _start_attempt(engine, clock, source.attempt.attempt_id, correlation_id=uuid4())
+    _complete_attempt(engine, clock, source.attempt.attempt_id,
         result=ExecutionResult.FAILURE,
         error_code="image_not_found",
         retryable=False,
@@ -623,9 +620,8 @@ def test_schedule_revision_and_original_snapshot_retry_http_contract(engine: Eng
         _single_command(target_id, key="http-retry-source"), correlation_id=uuid4()
     )
     source = scheduling.materialize_due(worker_id=uuid4(), correlation_id=uuid4())[0]
-    scheduling.start_attempt(source.attempt.attempt_id, correlation_id=uuid4())
-    scheduling.complete_attempt(
-        source.attempt.attempt_id,
+    _start_attempt(engine, clock, source.attempt.attempt_id, correlation_id=uuid4())
+    _complete_attempt(engine, clock, source.attempt.attempt_id,
         result=ExecutionResult.FAILURE,
         error_code="assertion_failed",
         retryable=False,
@@ -838,7 +834,7 @@ def test_single_task_cancel_and_history_delete_preserve_state_boundaries(engine:
         _single_command(target_id, key="cancel-running"), correlation_id=uuid4()
     )
     running = scheduling.materialize_due(worker_id=uuid4(), correlation_id=uuid4())[0]
-    scheduling.start_attempt(running.attempt.attempt_id, correlation_id=uuid4())
+    _start_attempt(engine, clock, running.attempt.attempt_id, correlation_id=uuid4())
     requested = scheduling.cancel_single_task(
         running_task.task.task_id,
         expected_version=running_task.task.row_version,

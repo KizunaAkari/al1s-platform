@@ -1,5 +1,14 @@
 name: al1s-bot
 
+x-meme-runtime: &meme-runtime
+  AL1S_MEME_BACKEND_TOKEN: ${AL1S_MEME_BACKEND_TOKEN:-}
+  AL1S_MEME_DATABASE_URL: ${AL1S_MEME_DATABASE_URL:-}
+  AL1S_MEME_MASTER_KEY: ${AL1S_MEME_MASTER_KEY:-}
+  AL1S_MEME_S3_ENDPOINT_URL: ${AL1S_MEME_S3_ENDPOINT_URL:-http://al1s-platform-storage-s3:8333}
+  AL1S_MEME_S3_BUCKET: ${AL1S_MEME_S3_BUCKET:-al1s-platform}
+  AL1S_MEME_S3_ACCESS_KEY: ${AL1S_MEME_S3_ACCESS_KEY:-}
+  AL1S_MEME_S3_SECRET_KEY: ${AL1S_MEME_S3_SECRET_KEY:-}
+
 x-retained-syslog: &retained-syslog
   driver: syslog
   options:
@@ -10,16 +19,22 @@ x-retained-syslog: &retained-syslog
 
 services:
   llbot:
-    image: linyuchen/llbot:${LLBOT_VERSION:-latest}
-    container_name: al1s-llbot
+    image: ${AL1S_QQ_BOT_IMAGE:?set verified complete QQ image}
+    container_name: al1s-bot-qq
     logging: *retained-syslog
     restart: unless-stopped
     init: true
     environment:
+      <<: *meme-runtime
+      AL1S_MEME_ROLE: qq
+      AL1S_QUANT_DATABASE_URL: ${AL1S_QUANT_DATABASE_URL:-}
       TZ: Asia/Shanghai
       WEBUI_PORT: 3080
-      HTTP_PROXY: ${AL1S_BOT_HTTP_PROXY:-}
-      HTTPS_PROXY: ${AL1S_BOT_HTTP_PROXY:-}
+      AUTO_LOGIN_QQ: ${AUTO_LOGIN_QQ:-}
+      PROTOCOL_MODE: ${AL1S_QQ_PROTOCOL_MODE:-direct}
+      # QQ has its own egress setting; an empty value keeps LLBot direct.
+      HTTP_PROXY: ${AL1S_QQ_HTTP_PROXY:-}
+      HTTPS_PROXY: ${AL1S_QQ_HTTP_PROXY:-}
       NODE_USE_ENV_PROXY: "1"
       NO_PROXY: ${AL1S_BOT_NO_PROXY:-localhost,127.0.0.1,backend,al1s-platform-app,al1s-llbot}
     volumes:
@@ -27,12 +42,16 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - bot-network
-      - control-network
+      bot-network:
+        aliases: [al1s-llbot]
+      control-network:
+        aliases: [al1s-llbot]
     healthcheck:
       test:
-        - CMD-SHELL
-        - node -e "fetch('http://127.0.0.1:'+(process.env.WEBUI_PORT||3080)).then(()=>process.exit(0),()=>process.exit(1))"
+        - CMD
+        - python
+        - -m
+        - al1s.meme_workshop.healthcheck
       interval: 30s
       timeout: 10s
       retries: 3
@@ -40,14 +59,16 @@ services:
 
   discord-worker:
     build:
-      context: ../../backend/al1s-bot
-      dockerfile: Dockerfile
+      context: ../../backend
+      dockerfile: al1s-bot/Dockerfile
     image: ${AL1S_DISCORD_WORKER_IMAGE:-al1s-plachta:local}
-    container_name: al1s-discord-worker
+    container_name: al1s-bot-discord
     logging: *retained-syslog
     restart: unless-stopped
     init: true
     environment:
+      <<: *meme-runtime
+      AL1S_MEME_ROLE: discord
       TZ: Asia/Shanghai
       AL1S_CONTROL_BASE_URL: ${AL1S_CONTROL_BASE_URL:-http://backend:8000}
       AL1S_BOT_STATE_DIR: /var/lib/al1s-plachta
@@ -62,8 +83,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - bot-network
-      - control-network
+      bot-network:
+        aliases: [al1s-discord-worker]
+      control-network:
+        aliases: [al1s-discord-worker]
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
@@ -71,7 +94,7 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    stop_grace_period: 20s
+    stop_grace_period: 35s
 
 networks:
   bot-network:

@@ -42,7 +42,8 @@ const MAX_MESSAGES = 64;
 const MAX_ACTIVE_WINDOWS = 512;
 
 function firstCharacter(content: string): string {
-  return Array.from(content.trimStart())[0] ?? "";
+  const codePoint = content.trimStart().codePointAt(0);
+  return codePoint === undefined ? "" : String.fromCodePoint(codePoint);
 }
 
 /** Ephemeral state only. A rule revision or worker restart starts a new window. */

@@ -1,6 +1,7 @@
 import hashlib
 import os
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -40,13 +41,15 @@ def test_published_platform_to_host_download_contract(repository, tmp_path):
     assert service.verify_once()
     terminal = uuid4()
     app = FastAPI()
+    app.state.services = SimpleNamespace()
     app.state.settings = Settings(
         host_managers={
             terminal: HostManagerConnection(url="https://host.local", token="x" * 32),
         }
     )
-    app.state.execution_resources = MagicMock()
-    app.state.linux_releases = service
+    app.state.services.settings = app.state.settings
+    app.state.services.execution_resources = MagicMock()
+    app.state.services.linux_releases = service
     app.include_router(router, prefix="/api/v1")
     with TestClient(app) as api:
 
@@ -214,8 +217,10 @@ def test_admin_and_host_credentials_are_separate():
         host_managers={terminal: HostManagerConnection(url="https://host.local", token="x" * 32)},
     )
     app = FastAPI()
-    app.state.settings, app.state.execution_resources = settings, MagicMock()
-    app.state.linux_releases = MagicMock()
+    app.state.services = SimpleNamespace()
+    app.state.settings, app.state.services.execution_resources = settings, MagicMock()
+    app.state.services.settings = app.state.settings
+    app.state.services.linux_releases = MagicMock()
     install_admin_auth(app, settings)
     app.include_router(router, prefix="/api/v1")
 
@@ -235,7 +240,7 @@ def test_admin_and_host_credentials_are_separate():
     )
     assert client.get(path).status_code == 401  # Admin cookie is not host identity.
     assert client.post("/api/v1/releases/linux", json={}).status_code == 403
-    app.state.execution_resources.require_linux_terminal.assert_not_called()
+    app.state.services.execution_resources.require_linux_terminal.assert_not_called()
 
 
 def test_ready_blob_reuse_and_expired_completion_are_fenced(repository):

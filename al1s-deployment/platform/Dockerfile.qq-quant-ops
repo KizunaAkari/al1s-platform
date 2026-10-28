@@ -1,0 +1,4 @@
+ARG BASE_IMAGE=al1s-platform-ops:resource-review-20261015
+FROM ${BASE_IMAGE}
+COPY --from=backend --chown=al1s:al1s al1s/components/host/bot_deployment.py al1s/components/host/bot_driver.py al1s/components/host/bot_proof.py al1s/components/host/bot_inventory.py al1s/components/host/qq_candidate_builder.py /app/al1s/components/host/
+RUN python -c "from al1s.components.host.bot_proof import RuntimeProof; assert 'qq_quant_v1' in RuntimeProof.model_fields"

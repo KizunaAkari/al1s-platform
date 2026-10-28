@@ -1,0 +1,29 @@
+ARG PYTHON_IMAGE
+ARG LLBOT_BASE_IMAGE
+FROM ${PYTHON_IMAGE} AS meme-runtime
+COPY --from=backend requirements.lock /tmp/requirements.lock
+RUN apk add --no-cache libffi libstdc++ openssl ca-certificates \
+ && apk add --no-cache --virtual .build-deps build-base cmake cargo openssl-dev libffi-dev \
+ && python -m pip install --no-cache-dir -r /tmp/requirements.lock supervisor==4.3.0 \
+ && apk del .build-deps
+COPY --from=backend al1s /opt/al1s/al1s
+COPY qq-supervisord.conf /etc/al1s-qq-supervisord.conf
+ARG RUNTIME_VERSION=1.1.0
+ARG NATIVE_VERSION
+RUN python -c "import json,hashlib,pathlib,os; p=pathlib.Path('/opt/al1s/al1s'); source=hashlib.sha256(b''.join(f.read_bytes() for f in sorted(p.rglob('*.py')))).hexdigest(); pathlib.Path('/opt/al1s/runtime-manifest.json').write_text(json.dumps(dict(role='qq',runtime_version=os.environ['RUNTIME_VERSION'],native_version=os.environ['NATIVE_VERSION'],qq_device_identity_v1=True,qq_device_name_override=os.environ['NATIVE_VERSION']=='8.3.2',source_sha256=source,requirements_sha256=hashlib.sha256(pathlib.Path('/tmp/requirements.lock').read_bytes()).hexdigest())))"
+RUN PYTHONPATH=/opt/al1s python -c "import ssl,PIL,psycopg,cryptography; from al1s.meme_workshop.runtime_main import RuntimeSettings; assert ssl.create_default_context().cert_store_stats()['x509_ca']>0"
+
+FROM ${LLBOT_BASE_IMAGE}
+ARG RUNTIME_VERSION=1.1.0
+ARG NATIVE_VERSION
+RUN apk add --no-cache libffi libstdc++ ca-certificates
+COPY --from=meme-runtime /usr/local /usr/local
+COPY --from=meme-runtime /opt/al1s /opt/al1s
+COPY --from=meme-runtime /etc/al1s-qq-supervisord.conf /etc/al1s-qq-supervisord.conf
+ENV PYTHONPATH=/opt/al1s PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 AL1S_MEME_ROLE=qq AL1S_QQ_BOOTSTRAP_VERSION=1 SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+LABEL org.al1s.bot-role=qq org.al1s.runtime-version=${RUNTIME_VERSION} org.al1s.native-version=${NATIVE_VERSION}
+RUN python -c "import ssl,PIL,psycopg; assert ssl.create_default_context().cert_store_stats()['x509_ca']>0" && node --version
+RUN node -e "if(require('/app/llbot/package.json').version !== process.env.NATIVE_VERSION) throw Error('llbot version mismatch')"
+RUN python -m al1s.meme_workshop.runtime_probe
+ENTRYPOINT ["python","-m","al1s.bots.qq_identity.startup"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 CMD ["python","-m","al1s.meme_workshop.healthcheck"]

@@ -6,6 +6,8 @@ from math import isfinite
 from typing import Any
 from uuid import UUID
 
+from al1s.execution.recognition_geometry import FailureRecognitionGeometry
+
 
 @dataclass(frozen=True)
 class FailureDetail:
@@ -21,6 +23,7 @@ class FailureDetail:
     click_y: float | None
     actual_score: float | None
     configured_threshold: float | None
+    recognition_geometry: FailureRecognitionGeometry | None = None
 
 
 def _text(value: object) -> str | None:

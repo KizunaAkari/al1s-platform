@@ -9,7 +9,7 @@ from al1s.execution.recording_download import MAX_RECORDING_RANGE, RecordingFile
 
 class FailureReviewRepository(Protocol):
     def list_attempts(
-        self, task_id: UUID, cursor: UUID | None, now: datetime
+        self, task_id: UUID, cursor: UUID | None, now: datetime, *, execution_id: UUID | None = None
     ) -> dict[str, Any]: ...
     def metadata(
         self, task: UUID, attempt: UUID, artifact: UUID, now: datetime
@@ -27,8 +27,12 @@ class FailureReviewService:
     ) -> None:
         self.repository, self.store, self.clock = repository, store, clock
 
-    def details(self, task: UUID, cursor: UUID | None) -> dict[str, Any]:
-        return self.repository.list_attempts(task, cursor, self.clock())
+    def details(
+        self, task: UUID, cursor: UUID | None, *, execution_id: UUID | None = None
+    ) -> dict[str, Any]:
+        if execution_id is None:
+            return self.repository.list_attempts(task, cursor, self.clock())
+        return self.repository.list_attempts(task, cursor, self.clock(), execution_id=execution_id)
 
     def metadata(self, task: UUID, attempt: UUID, artifact: UUID) -> RecordingFile:
         return self.repository.metadata(task, attempt, artifact, self.clock())

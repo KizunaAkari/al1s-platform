@@ -87,6 +87,7 @@ def test_image_upload_save_reopen_and_gc_protection(monkeypatch):
             pass
 
     app = create_app(Settings(admin_password="image-test-password"), readiness_service=Ready())
+    app.state.services = SimpleNamespace()
 
     async def exercise():
         async with app.router.lifespan_context(app):
@@ -96,9 +97,11 @@ def test_image_upload_save_reopen_and_gc_protection(monkeypatch):
             monkeypatch.setattr(
                 "al1s.api.maa_catalog_devices.probe_foreground_package", foreground_package
             )
-            monkeypatch.setattr(app.state.maa_editor_creation, "needs_icon", lambda *_args: False)
-            app.state.maa_images._store = Store()
-            app.state.maa_exports._store = Store()
+            monkeypatch.setattr(
+                app.state.services.maa_editor_creation, "needs_icon", lambda *_args: False
+            )
+            app.state.services.maa_images._store = Store()
+            app.state.services.maa_exports._store = Store()
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app),
                 base_url="https://test",

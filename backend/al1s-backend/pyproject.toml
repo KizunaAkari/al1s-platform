@@ -34,6 +34,9 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["al1s*"]
 
+[tool.setuptools.package-data]
+"al1s.meme_workshop" = ["assets/*.otf", "assets/*.png", "assets/*.txt", "assets/*.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

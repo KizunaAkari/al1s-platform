@@ -15,14 +15,16 @@ from al1s.app.config import Settings
 
 def build_client():
     app = FastAPI()
+    app.state.services = SimpleNamespace()
     settings = Settings(admin_password="message-test-password", admin_cookie_secure=False)
     app.state.settings = settings
+    app.state.services.settings = app.state.settings
     install_admin_auth(app, settings)
     app.include_router(notifications, prefix="/api/v1/notifications")
     app.include_router(reviews, prefix="/api/v1")
     app.include_router(containers, prefix="/api/v1")
-    app.state.notification_commands = MagicMock()
-    app.state.reviews = MagicMock()
+    app.state.services.notification_commands = MagicMock()
+    app.state.services.reviews = MagicMock()
 
     @app.middleware("http")
     async def correlation(request: Request, call_next):
@@ -46,14 +48,14 @@ def test_notification_submission_requires_login_and_never_accepts_forward_bypass
     assert (
         client.post("/api/v1/notifications/intents", json=body, headers=headers).status_code == 401
     )
-    app.state.notification_commands.materialize_intent.assert_not_called()
+    app.state.services.notification_commands.materialize_intent.assert_not_called()
     assert (
         client.post(
             "/api/v1/auth/login", json={"password": "message-test-password"}, headers=headers
         ).status_code
         == 200
     )
-    app.state.notification_commands.materialize_intent.return_value = SimpleNamespace(
+    app.state.services.notification_commands.materialize_intent.return_value = SimpleNamespace(
         intent_id=uuid4(),
         source_event_id=uuid4(),
         disposition="no_route",
@@ -72,16 +74,16 @@ def test_review_body_is_not_read_without_admin_session():
     client, app = build_client()
     result = client.get(f"/api/v1/notifications/reviews/{uuid4()}")
     assert result.status_code == 401
-    app.state.reviews.detail.assert_not_called()
+    app.state.services.reviews.detail.assert_not_called()
     headers = {"X-AL1S-CSRF": "1"}
     client.post("/api/v1/auth/login", json={"password": "message-test-password"}, headers=headers)
-    app.state.reviews.detail.return_value = {
+    app.state.services.reviews.detail.return_value = {
         "body_available": True,
         "document": {"text": "private"},
     }
     response = client.get(f"/api/v1/notifications/reviews/{uuid4()}")
     assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
-    app.state.reviews.detail.assert_called_once()
+    app.state.services.reviews.detail.assert_called_once()
 
 
 def test_container_operations_require_login_and_csrf():

@@ -3,10 +3,11 @@ from types import TracebackType
 from typing import Self, cast
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from al1s.adapters.postgres.device_path_models import DeviceAuthorityRow
 from al1s.adapters.postgres.editor_models import EditorSessionRow as Row
 from al1s.adapters.postgres.execution_models import (
     TargetDeviceRow,
@@ -66,6 +67,13 @@ class EditorSqlTransaction:
             self._session.close()
 
     def target_terminal(self, device_id: UUID, *, lock: bool = False) -> UUID:
+        if lock and self._session.scalar(
+            select(DeviceAuthorityRow.device_id).where(
+                DeviceAuthorityRow.device_id == device_id,
+                DeviceAuthorityRow.state != "active",
+            )
+        ):
+            raise ConflictError("device_handoff_in_progress", "Device input authority is changing")
         query = (
             select(TargetDeviceRow.managing_terminal_id, TerminalCapabilityProfileRow.provider_keys)
             .join(TerminalRow, TargetDeviceRow.managing_terminal_id == TerminalRow.id)
@@ -75,10 +83,14 @@ class EditorSqlTransaction:
             )
             .where(
                 TargetDeviceRow.id == device_id,
-                TargetDeviceRow.mode == "mounted",
+                or_(
+                    and_(TargetDeviceRow.mode == "mounted", TerminalRow.terminal_type == "linux"),
+                    and_(
+                        TargetDeviceRow.mode == "standalone", TerminalRow.terminal_type == "android"
+                    ),
+                ),
                 TargetDeviceRow.deleted_at.is_(None),
                 TerminalRow.deleted_at.is_(None),
-                TerminalRow.terminal_type == "linux",
             )
         )
         if lock:
@@ -99,16 +111,18 @@ class EditorSqlTransaction:
         ).scalar_one_or_none()
         return record(row) if row else None
 
-    def by_device(self, device_id: UUID) -> EditorSession | None:
-        row = self._session.execute(
-            select(Row).where(Row.device_id == device_id, Row.status.in_(ACTIVE)).with_for_update()
-        ).scalar_one_or_none()
+    def by_device(self, device_id: UUID, *, lock: bool = True) -> EditorSession | None:
+        query = select(Row).where(Row.device_id == device_id, Row.status.in_(ACTIVE))
+        if lock:
+            query = query.with_for_update().execution_options(populate_existing=True)
+        row = self._session.execute(query).scalar_one_or_none()
         return record(row) if row else None
 
-    def get(self, session_id: UUID) -> EditorSession:
-        row = self._session.execute(
-            select(Row).where(Row.id == session_id).with_for_update()
-        ).scalar_one_or_none()
+    def get(self, session_id: UUID, *, lock: bool = True) -> EditorSession:
+        query = select(Row).where(Row.id == session_id)
+        if lock:
+            query = query.with_for_update().execution_options(populate_existing=True)
+        row = self._session.execute(query).scalar_one_or_none()
         if row is None:
             raise NotFoundError("editor_session")
         return record(row)

@@ -1,6 +1,7 @@
 """Historical overlay builds must require an explicitly reviewed base image."""
 
 from pathlib import Path
+import re
 
 
 def test_overlay_dockerfiles_have_no_implicit_historical_base() -> None:
@@ -9,5 +10,6 @@ def test_overlay_dockerfiles_have_no_implicit_historical_base() -> None:
     assert overlays
     for dockerfile in overlays:
         text = dockerfile.read_text(encoding="utf-8")
-        assert "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}" in text, dockerfile.name
-        assert "ARG BASE_IMAGE=" not in text, dockerfile.name
+        base = re.search(r"^ARG ([A-Z_]+)\nFROM \$\{\1\}(?:\n|$)", text, re.MULTILINE)
+        assert base is not None, dockerfile.name
+        assert f"ARG {base[1]}=" not in text, dockerfile.name

@@ -9,13 +9,9 @@ from typing import BinaryIO, cast
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import Engine, create_engine, select, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import Engine, create_engine, text
+from sqlalchemy.orm import sessionmaker
 
-from al1s.adapters.postgres.maa_models import (
-    MaaScriptRow,
-    MaaScriptVersionRow,
-)
 from al1s.adapters.postgres.maa_unit_of_work import MaaSqlAlchemyUnitOfWork
 from al1s.kernel.types import BlobObjectHead
 from al1s.maa.catalog_service import MaaCatalogQueryService
@@ -109,34 +105,6 @@ def _import_commands(engine: Engine, store: MemoryBlobStore) -> MaaArchiveImport
 
     importer = MaaArchiveImportService(factory, store)
     return MaaArchiveImportCommandService(factory, store, importer)
-
-
-def _publication_service(engine: Engine) -> MaaScriptPublicationService:
-    sessions = sessionmaker(bind=engine, expire_on_commit=False)
-
-    def factory() -> MaaUnitOfWork:
-        return cast(MaaUnitOfWork, MaaSqlAlchemyUnitOfWork(sessions))
-
-    return MaaScriptPublicationService(factory)
-
-
-def _stage_imports_for_editing(engine: Engine) -> None:
-    """Publication tests explicitly edit imported executable assets into candidates."""
-    with Session(engine) as session:
-        rows = session.execute(
-            select(MaaScriptRow, MaaScriptVersionRow).join(
-                MaaScriptVersionRow, MaaScriptVersionRow.id == MaaScriptRow.current_version_id
-            )
-        ).all()
-        inputs = [(script.id, script.row_version, version.manifest) for script, version in rows]
-    publication = _publication_service(engine)
-    for script_id, row_version, manifest in inputs:
-        publication.save_candidate(
-            script_id=script_id,
-            expected_script_version=row_version,
-            manifest=manifest,
-            correlation_id=uuid4(),
-        )
 
 
 def _strategy_service(engine: Engine) -> MaaStrategyService:

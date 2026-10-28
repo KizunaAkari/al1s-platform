@@ -5,15 +5,18 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from dataclasses import replace
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import Engine, create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import Engine, create_engine, select, text
+from sqlalchemy.orm import Session, sessionmaker
 
+from al1s.adapters.postgres.delivery_models import TaskPackageRow
+from al1s.adapters.postgres.execution_models import ExecutionLeaseRow
 from al1s.adapters.postgres.execution_unit_of_work import ExecutionSqlAlchemyUnitOfWork
+from al1s.adapters.postgres.scheduling_models import ExecutionAttemptRow
 from al1s.adapters.postgres.scheduling_unit_of_work import (
     SchedulingSqlAlchemyUnitOfWork,
 )
@@ -22,6 +25,12 @@ from al1s.execution.definitions import (
     canonical_manifest_hash,
 )
 from al1s.execution.delivery_service import TerminalDeliveryService
+from al1s.execution.delivery_types import (
+    AttemptStartResult,
+    PackageReceiptDisposition,
+    TerminalResultKind,
+    TerminalResultReceipt,
+)
 from al1s.execution.offline_permits import OfflinePermitSigner
 from al1s.execution.ports import ExecutionUnitOfWork
 from al1s.execution.scheduling_ports import SchedulingUnitOfWork
@@ -29,6 +38,7 @@ from al1s.execution.scheduling_service import ExecutionSchedulingService
 from al1s.execution.scheduling_types import (
     CapabilityRequirements,
     CreateTaskCommand,
+    ExecutionResult,
     LoopScheduleSpec,
     ResolvedExecutionDefinition,
     TaskType,
@@ -214,6 +224,50 @@ def _prepare_terminal_with_credential(
 def _prepare_terminal(resource_service: ExecutionResourceService) -> tuple[UUID, UUID]:
     terminal_id, target_id, _ = _prepare_terminal_with_credential(resource_service)
     return terminal_id, target_id
+
+
+def _start_attempt(
+    engine: Engine, clock: list[datetime] | None, attempt_id: UUID, *, correlation_id: UUID,
+) -> AttemptStartResult:
+    clock = clock or [datetime.now(UTC)]
+    delivery, _ = _delivery_services(engine, clock)
+    with Session(engine) as session:
+        package = session.scalars(
+            select(TaskPackageRow).where(TaskPackageRow.attempt_id == attempt_id)
+        ).one()
+    receipt = delivery.receive_package(
+        terminal_id=package.terminal_id, package_id=package.id, attempt_id=attempt_id,
+        report_id=uuid4(), command_id=None, disposition=PackageReceiptDisposition.ACCEPTED,
+        rejection_code=None, diagnostic=None, occurred_at=clock[0], correlation_id=correlation_id,
+    )
+    assert receipt.offline_start_permit is not None
+    return delivery.start_attempt(
+        terminal_id=package.terminal_id, attempt_id=attempt_id, package_id=package.id,
+        offline_permit_id=receipt.offline_start_permit.permit_id,
+        offline_permit_token=receipt.offline_start_permit.token,
+        report_id=uuid4(), occurred_at=clock[0], correlation_id=correlation_id,
+    )
+
+
+def _complete_attempt(
+    engine: Engine, clock: list[datetime] | None, attempt_id: UUID, *, result: ExecutionResult,
+    error_code: str | None, retryable: bool, correlation_id: UUID,
+) -> TerminalResultReceipt:
+    clock = clock or [datetime.now(UTC)]
+    delivery, _ = _delivery_services(engine, clock)
+    with Session(engine) as session:
+        package, lease = session.execute(
+            select(TaskPackageRow, ExecutionLeaseRow)
+            .join(ExecutionAttemptRow, ExecutionAttemptRow.id == TaskPackageRow.attempt_id)
+            .join(ExecutionLeaseRow, ExecutionLeaseRow.id == ExecutionAttemptRow.lease_id)
+            .where(TaskPackageRow.attempt_id == attempt_id)
+        ).one()
+    return delivery.receive_result(
+        terminal_id=package.terminal_id, attempt_id=attempt_id, package_id=package.id,
+        report_id=uuid4(), lease_id=lease.id, lease_version=lease.row_version,
+        result_kind=TerminalResultKind(result.value), error_code=error_code, retryable=retryable,
+        occurred_at=clock[0], correlation_id=correlation_id,
+    )
 
 
 def _loop_command(target_id: UUID, *, key: str = "loop-key") -> CreateTaskCommand:

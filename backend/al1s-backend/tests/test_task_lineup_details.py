@@ -60,7 +60,7 @@ def test_attempt_page_uses_one_owned_join_without_per_row_reads():
 
         def execute(self, query):
             queries.append(query)
-            return SimpleNamespace(all=lambda: [(attempt, record_id, "lineup")])
+            return SimpleNamespace(all=lambda: [(attempt, record_id, "lineup", None)])
 
         def scalars(self, query):
             queries.append(query)

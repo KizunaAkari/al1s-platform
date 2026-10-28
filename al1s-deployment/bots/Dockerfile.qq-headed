@@ -1,0 +1,25 @@
+ARG PMHQ_BASE=linyuchen/pmhq@sha256:d69666ce55405c41ea270198ca9620743d13aa899fee49b4f8800c85cfb4f251
+FROM ${PMHQ_BASE} AS complete
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends python3-venv python3-dev build-essential libffi-dev libssl-dev fonts-noto-cjk ca-certificates \
+ && python3 -m venv /opt/al1s-venv && rm -rf /var/lib/apt/lists/*
+ENV PATH=/opt/al1s-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+COPY --from=backend requirements.lock /tmp/requirements.lock
+RUN python -m pip install --no-cache-dir -r /tmp/requirements.lock supervisor==4.3.0
+COPY --from=llbot . /app/llbot/
+RUN python -c "import json,pathlib; p=pathlib.Path('/app/llbot/default_config.json'); config=json.loads(p.read_text()); config['webui']['host']=''; config['webui']['port']=3080; p.write_text(json.dumps(config))"
+RUN chmod +x /app/llbot/node /opt/pmhq && ln -s /app/llbot/node /usr/local/bin/node
+COPY --from=backend al1s /opt/al1s/al1s
+COPY qq-headed-supervisord.conf /etc/al1s-qq-supervisord.conf
+ARG RUNTIME_VERSION=2.0.0
+RUN python -c "import json,hashlib,pathlib; p=pathlib.Path('/opt/al1s/al1s'); source=hashlib.sha256(b''.join(f.read_bytes() for f in sorted(p.rglob('*.py')))).hexdigest(); pathlib.Path('/opt/al1s/runtime-manifest.json').write_text(json.dumps(dict(role='qq',runtime_version='2.0.0',native_version='8.3.2',qq_protocol_mode='pmhq',qq_headed_v1=True,qq_client_version='3.2.34-53644',pmhq_version='9.0.6',source_sha256=source,requirements_sha256=hashlib.sha256(pathlib.Path('/tmp/requirements.lock').read_bytes()).hexdigest())))"
+# Repackage the frozen filesystem to remove the upstream anonymous QQ VOLUME.
+# Client data is exclusively the existing backed-up /app/llbot/data bind mount.
+FROM scratch
+COPY --from=complete / /
+ENV PATH=/opt/al1s-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin PYTHONPATH=/opt/al1s PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 AL1S_MEME_ROLE=qq PROTOCOL_MODE=pmhq DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 TZ=Asia/Shanghai SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+LABEL org.al1s.bot-role=qq org.al1s.runtime-version=2.0.0 org.al1s.native-version=8.3.2 org.al1s.qq-protocol-mode=pmhq
+WORKDIR /app/llbot
+RUN python -m al1s.meme_workshop.runtime_probe
+ENTRYPOINT ["python","-m","al1s.bots.qq_headed.startup"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 CMD ["python","-m","al1s.meme_workshop.healthcheck"]

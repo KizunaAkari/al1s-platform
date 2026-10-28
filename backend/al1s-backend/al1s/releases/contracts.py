@@ -15,7 +15,9 @@ class ReleaseInput(BaseModel):
     architecture: Literal["arm64"] = "arm64"
     size_bytes: int = Field(gt=0, le=MAX_PACKAGE_BYTES)
     sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    candidate_image: str = Field(pattern=r"^al1s-terminal-next:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+    candidate_image: str = Field(
+        pattern=r"^al1s-terminal(?:-next)?:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    )
     expected_image_id: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
 
 

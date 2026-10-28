@@ -29,4 +29,10 @@ describe("safe online health", () => {
     expect(health.platformSnapshot().diagnostics.runtime_error_code).toBe("discord_authentication_failed");
     expect(JSON.stringify(health.platformSnapshot())).not.toContain("SECRET");
   });
+  it("includes the loaded worker binding separately from account readiness", () => {
+    const health = new HealthState();
+    const identity = { credential_sha256: "a".repeat(64), service_id: "12345678-1234-4123-8123-123456789abc" };
+    expect(health.snapshot(identity).identity).toEqual(identity);
+    expect(health.snapshot(identity).discordReady).toBe(false);
+  });
 });

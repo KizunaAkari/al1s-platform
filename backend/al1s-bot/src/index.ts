@@ -1,5 +1,5 @@
 import { SapphireClient } from "@sapphire/framework";
-import { GatewayIntentBits } from "discord.js";
+import { GatewayIntentBits, Partials } from "discord.js";
 
 import { MessageDeduplicator } from "./bridge/dedupe.js";
 import { DiscordRuleBridge } from "./bridge/service.js";
@@ -7,7 +7,9 @@ import { configuredProvider } from "./config-provider.js";
 import { HealthServer } from "./health/server.js";
 import { HealthState } from "./health/state.js";
 import { Logger } from "./logger.js";
-import { setRuntime } from "./runtime.js";
+import { setRuntime, type RuntimeServices } from "./runtime.js";
+import { MemeCommandService } from "./memes/service.js";
+import { readMemeMedia } from "./memes/media.js";
 import { outboundProxy } from "./outbound-proxy.js";
 
 async function main(): Promise<void> {
@@ -15,22 +17,27 @@ async function main(): Promise<void> {
   const config = await provider.load();
   const logger = new Logger(config.logLevel);
   const health = new HealthState();
-  if (!provider.submitMessage || !provider.startIngress) throw new Error("platform_ingress_required");
   const deduplicator = new MessageDeduplicator(config.forward.dedupeTtlMs);
   const bridge = new DiscordRuleBridge(
-    config, deduplicator, health, logger, message => provider.submitMessage!(message),
+    config, deduplicator, health, logger, message => provider.submitMessage(message),
   );
   let stopIngress: (() => void) | undefined;
-  const healthServer = new HealthServer(config.health.host, config.health.port, health, logger);
-  setRuntime({ bridge, health, logger });
+  const healthServer = new HealthServer(config.health.host, config.health.port, health, logger,
+    () => provider.runtimeIdentity?.() ?? null);
+  const runtime: RuntimeServices = { bridge, health, logger };
+  setRuntime(runtime);
+  let memeSender: { close(): void } | undefined;
+  const proxy = outboundProxy();
 
   const client = new SapphireClient({
-    ...outboundProxy(),
+    ...proxy,
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.DirectMessages,
       GatewayIntentBits.MessageContent
     ],
+    partials: [Partials.Channel],
     loadMessageCommandListeners: false
   });
 
@@ -50,6 +57,8 @@ async function main(): Promise<void> {
     }
     stopping = true;
     startupAbort.abort();
+    runtime.memes?.stop();
+    memeSender?.close();
     health.setShuttingDown();
     logger.info("worker_stopping", { signal });
     stopConfigWatch?.();
@@ -93,7 +102,6 @@ async function main(): Promise<void> {
   }
   stopHeartbeat = provider.startHeartbeat?.(() => health.platformSnapshot());
   try {
-    if (!provider.loadForwardRules) throw new Error("platform_rule_provider_required");
     const rules = await provider.loadForwardRules(startupAbort.signal);
     if (stopping) return;
     bridge.setRules(rules);
@@ -120,6 +128,20 @@ async function main(): Promise<void> {
     }
     await provider.markApplied?.();
     if (stopping) return;
+    if (provider.memeRequest) {
+      const { createMemeSender } = await import("./memes/reply.js");
+      if (stopping) return;
+      const sender = createMemeSender(config.discord.token, proxy.rest?.agent);
+      memeSender = sender;
+      runtime.memes = new MemeCommandService({
+        request: (path, init) => provider.memeRequest(path, init),
+        send: sender.send,
+        avatarURL: sender.avatarURL,
+        media: (url, signal) => readMemeMedia(url, signal, proxy.rest?.agent),
+        report: code => logger.warn(code),
+      });
+      runtime.memes.start();
+    }
     stopForwardRules = provider.watchForwardRules?.(rules => {
       if (!stopping) bridge.setRules(rules);
     });

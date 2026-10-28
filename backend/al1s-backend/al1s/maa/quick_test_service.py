@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+from al1s.components.maintenance_guard import admit_new_work
 from al1s.execution.scheduling_types import (
     CapabilityRequirements,
     ResolvedExecutionDefinition,
@@ -110,6 +111,7 @@ class MaaQuickTestService:
         now = self._now()
         frozen_definition = _definition_to_json(definition)
         with self._uow_factory() as uow:
+            admit_new_work(uow, terminal_id, target_device_id)
             session = QuickTestSessionRecord(
                 session_id=uuid4(),
                 script_id=script_id,

@@ -20,6 +20,11 @@ from al1s.execution.scheduling_types import (
 )
 
 
+def canonical_package_text(body: dict[str, object]) -> str:
+    """Return the existing hash representation without cross-runtime float rewriting."""
+    return json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
 def build_task_package_manifest(
     *,
     package_id: UUID,
@@ -69,7 +74,7 @@ def build_task_package_manifest(
         "max_retries": snapshot.max_retries,
         "record_video": snapshot.record_video,
     }
-    canonical = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    canonical = canonical_package_text(body)
     return body, hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 

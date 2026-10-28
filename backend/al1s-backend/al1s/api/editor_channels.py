@@ -10,7 +10,9 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.concurrency import run_in_threadpool
 from websockets.asyncio.client import ClientConnection
 
+from al1s.api.android_editor_channels import serve_browser
 from al1s.app.admin_auth import COOKIE
+from al1s.app.service_state import service_state
 from al1s.execution.errors import ExecutionDomainError
 from al1s.infrastructure.editor_relay import DirectConnect, allowed_target
 
@@ -26,6 +28,8 @@ def browser_connection(
     result = dict(connection)
     result.pop("app_icon_ws_url", None)
     result.pop("ocr_ws_url", None)
+    if connection.get("transport") == "android-reverse-v1":
+        return result
     if not allowed_target(connection["video_ws_url"]):
         return result
     for channel in CHANNELS:
@@ -88,9 +92,14 @@ async def editor_channel(socket: WebSocket, session_id: UUID, channel: str) -> N
         await socket.close(code=1008)
         return
     try:
-        _, connection = await run_in_threadpool(socket.app.state.editor_sessions.detail, session_id)
+        _, connection = await run_in_threadpool(
+            service_state(socket).editor_sessions.detail, session_id
+        )
     except ExecutionDomainError:
         await socket.close(code=1008)
+        return
+    if connection and connection.get("transport") == "android-reverse-v1":
+        await serve_browser(socket, session_id, channel)
         return
     target = connection.get(f"{channel}_ws_url") if connection else None
     if target is None or not allowed_target(target):

@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -25,7 +27,7 @@ def test_duplicate_registration_rejected() -> None:
 
 def test_module_contract() -> None:
     app = FastAPI()
-    app.state.modules = platform_modules()
+    app.state.services = SimpleNamespace(modules=platform_modules())
     app.include_router(router)
     response = TestClient(app).get('/modules')
     assert response.status_code == 200

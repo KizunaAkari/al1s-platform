@@ -151,64 +151,6 @@ class MaaStrategyService:
         )
         return StrategySaveResult(published, version, tuple(modules), False)
 
-    def update_strategy(
-        self,
-        *,
-        strategy_id: UUID,
-        expected_strategy_version: int,
-        start_script_id: UUID,
-        process_modules: Sequence[ProcessModuleInput],
-        end_script_id: UUID,
-        start_wait_after_ms: int = 0,
-        default_parameters: dict[str, Any] | None = None,
-        correlation_id: UUID,
-        expected_impact_hash: str | None = None,
-    ) -> StrategySaveResult:
-        now = self._now()
-        with self._uow_factory() as uow:
-            result = self.update_strategy_in_uow(
-                uow,
-                strategy_id=strategy_id,
-                expected_strategy_version=expected_strategy_version,
-                start_script_id=start_script_id,
-                process_modules=process_modules,
-                end_script_id=end_script_id,
-                start_wait_after_ms=start_wait_after_ms,
-                default_parameters=default_parameters or {},
-                expected_impact_hash=expected_impact_hash,
-                correlation_id=correlation_id,
-                now=now,
-            )
-            uow.commit()
-            return result
-
-    def preview_update(
-        self,
-        *,
-        strategy_id: UUID,
-        expected_strategy_version: int,
-        start_script_id: UUID,
-        process_modules: Sequence[ProcessModuleInput],
-        end_script_id: UUID,
-        start_wait_after_ms: int = 0,
-        default_parameters: dict[str, Any] | None = None,
-    ) -> StrategyPublicationImpact:
-        with self._uow_factory() as uow:
-            strategy = self._require_strategy(
-                uow, strategy_id, expected_strategy_version, for_update=False
-            )
-            proposed, _ = self._build_version(
-                uow,
-                strategy=strategy,
-                start_script_id=start_script_id,
-                process_modules=process_modules,
-                end_script_id=end_script_id,
-                start_wait_after_ms=start_wait_after_ms,
-                default_parameters=default_parameters or {},
-                now=self._now(),
-            )
-            return self._preview_impact(uow, strategy, proposed)
-
     def update_strategy_in_uow(
         self,
         uow: MaaUnitOfWork,

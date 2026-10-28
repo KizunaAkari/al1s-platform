@@ -1,11 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import type { WorkerIdentity } from "./health/state.js";
 import { chmod, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { z } from "zod";
 
 import { loadConfig, type AppConfig } from "./config.js";
-import type { ConfigProvider } from "./config-provider.js";
 import type { ForwardRule } from "./bridge/forward-rule-matcher.js";
 import { EncryptedIngressQueue, type RuleForwardMessage } from "./platform-ingress.js";
 
@@ -60,7 +60,12 @@ export interface PlatformProviderOptions {
   environment?: NodeJS.ProcessEnv;
 }
 
-export class PlatformConfigProvider implements ConfigProvider {
+export class PlatformConfigProvider {
+  public runtimeIdentity(): WorkerIdentity | null {
+    if (!this.credential || !this.active) return null;
+    return { credential_sha256: createHash("sha256").update(this.credential).digest("hex"),
+      service_id: this.active.service_id };
+  }
   private readonly baseUrl: string;
   private readonly lastKnownGoodPath: string;
   private readonly pollIntervalMs: number;
@@ -408,6 +413,12 @@ export class PlatformConfigProvider implements ConfigProvider {
         ? AbortSignal.any([init.signal, AbortSignal.timeout(10_000)])
         : AbortSignal.timeout(10_000)
     });
+  }
+
+  public memeRequest(path: string, init: RequestInit): Promise<Response> {
+    if (!path.startsWith("/api/v1/bots/worker/memes/") || path.includes("..")
+      || path.includes("?") || path.includes("#")) throw new Error("invalid_meme_endpoint");
+    return this.request(path, init);
   }
 
   private async postRuleMatch(message: RuleForwardMessage): Promise<number | { status: number; code?: string }> {

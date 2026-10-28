@@ -38,6 +38,11 @@ class Settings(BaseSettings):
         return validate_public_url(value)
 
     frontend_directory: str | None = None
+    meme_backend_url: str = ""
+    meme_qq_backend_url: str = ""
+    qq_runtime_artifact_digest: str = ""
+    qq_runtime_version: str = ""
+    meme_backend_token: SecretStr = SecretStr("")
     environment: str = "development"
     admin_password: SecretStr = SecretStr("")
     admin_cookie_secure: bool = True
@@ -45,6 +50,8 @@ class Settings(BaseSettings):
     bot_control_url: str = ""
     bot_control_token: SecretStr = SecretStr("")
     host_managers: dict[UUID, HostManagerConnection] = {}
+    component_host: HostManagerConnection | None = None
+    component_verification_directory: str = "/tmp/al1s-component-checks"
     terminal_heartbeat_timeout_seconds: int = Field(default=90, ge=30, le=3600)
     database_url: str = "postgresql+psycopg://al1s:change-me@localhost:5432/al1s"
     database_pool_size: int = Field(default=5, ge=1, le=100)

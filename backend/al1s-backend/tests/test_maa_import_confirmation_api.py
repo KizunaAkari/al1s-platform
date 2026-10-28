@@ -43,10 +43,10 @@ def request_for(service, selection):
         headers={"content-type": "application/zip", "X-AL1S-Import-Selection": selection},
         stream=stream,
         app=SimpleNamespace(
-            state=SimpleNamespace(
+            state=SimpleNamespace(services=SimpleNamespace(
                 maa_archive_import_commands=service,
                 maa_archive_upload_slots=asyncio.Semaphore(1),
-            )
+            ))
         ),
     )
 
@@ -100,7 +100,7 @@ def test_confirmation_error_is_returned_before_background_work(asynchronous):
                 await upload_archive(request, Response())
         assert caught.value is error
         assert not background.tasks
-        assert not request.app.state.maa_archive_upload_slots.locked()
+        assert not request.app.state.services.maa_archive_upload_slots.locked()
 
     asyncio.run(run())
 
@@ -120,7 +120,7 @@ def test_blob_endpoint_forwards_confirmation():
     request = SimpleNamespace(
         headers={},
         state=SimpleNamespace(request_id=str(uuid4())),
-        app=SimpleNamespace(state=SimpleNamespace(maa_archive_import_commands=service)),
+        app=SimpleNamespace(state=SimpleNamespace(services=SimpleNamespace(maa_archive_import_commands=service))),
     )
     import_archive(body, request, Response(), "test-idempotency")
     kwargs = service.import_ready_blob.call_args.kwargs

@@ -4,7 +4,8 @@ import asyncio
 from dataclasses import dataclass
 from typing import cast
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
+from starlette.requests import HTTPConnection
 
 from al1s.app.config import Settings
 from al1s.app.modules import ModuleRegistry
@@ -12,9 +13,14 @@ from al1s.appearance.service import AppearanceService
 from al1s.bots.gateway_probe import GatewayProbe
 from al1s.bots.runtime_status import BotRuntimeService
 from al1s.bots.service import BotService
+from al1s.components.inventory import ComponentInventoryService
+from al1s.components.operations import ComponentUpgradeService
+from al1s.components.releases import ComponentReleaseService
+from al1s.execution.android_editor_transport import AndroidEditorHub
 from al1s.execution.artifact_upload_service import ArtifactUploadService
 from al1s.execution.blob_transfer import TerminalBlobTransferService
 from al1s.execution.delivery_service import TerminalDeliveryService
+from al1s.execution.device_path_service import DevicePathService
 from al1s.execution.editor_service import EditorSessionService
 from al1s.execution.failure_review_service import FailureReviewService
 from al1s.execution.maintenance_service import MaintenanceService
@@ -22,6 +28,7 @@ from al1s.execution.mqtt_sessions import TerminalMqttSessionService
 from al1s.execution.recording_download import RecordingDownloadService
 from al1s.execution.scheduling_service import ExecutionSchedulingService
 from al1s.execution.services import ExecutionResourceService
+from al1s.execution.terminal_setup_checks import TerminalSetupCheckService
 from al1s.infrastructure.readiness import ReadinessService
 from al1s.kernel.maintenance import KernelMaintenanceService
 from al1s.kernel.storage_gc import StorageGcService
@@ -39,6 +46,7 @@ from al1s.maa.quick_test_service import MaaQuickTestService
 from al1s.maa.script_command_service import MaaScriptCommandService
 from al1s.maa.strategy_command_service import MaaStrategyCommandService
 from al1s.maa.strategy_service import MaaStrategyService
+from al1s.meme_workshop.transport import MemeBackendClient
 from al1s.notifications.discord_forward_rules import DiscordForwardRuleService
 from al1s.notifications.lexicon_service import LexiconService
 from al1s.notifications.query_service import NotificationQueryService
@@ -62,10 +70,15 @@ class PlatformServiceState:
     reviews: ReviewService
     gateway_probe: GatewayProbe
     editor_sessions: EditorSessionService
+    android_editor_hub: AndroidEditorHub
+    device_paths: DevicePathService
+    terminal_setup_checks: TerminalSetupCheckService
     notification_commands: NotificationService
     notification_queries: NotificationQueryService
     bot_service: BotService
     bot_runtime: BotRuntimeService
+    meme_backend: MemeBackendClient
+    meme_backends: dict[str, MemeBackendClient]
     execution_resources: ExecutionResourceService
     terminal_mqtt_sessions: TerminalMqttSessionService
     maa_publication: MaaScriptPublicationService
@@ -83,6 +96,9 @@ class PlatformServiceState:
     maa_exports: MaaScriptExportService
     maa_export_slots: asyncio.Semaphore
     linux_releases: ReleaseService
+    component_inventory: ComponentInventoryService
+    component_releases: ComponentReleaseService
+    component_upgrades: ComponentUpgradeService
     failure_reviews: FailureReviewService
     recording_downloads: RecordingDownloadService
     maa_archive_upload_slots: asyncio.Semaphore
@@ -94,19 +110,8 @@ class PlatformServiceState:
     terminal_delivery: TerminalDeliveryService
 
 
-def service_state(request: Request) -> PlatformServiceState:
-    services = getattr(request.app.state, "services", None)
-    if isinstance(services, PlatformServiceState):
-        return services
-    # Independently mounted routers and existing test doubles retain their legacy state view.
-    return cast(PlatformServiceState, request.app.state)
-
-
-def validate_service_state(app: FastAPI) -> None:
-    services = getattr(app.state, "services", app.state)
-    missing = [name for name in PlatformServiceState.__annotations__ if not hasattr(services, name)]
-    if missing:
-        raise RuntimeError(f"Platform service assembly is incomplete: {', '.join(missing)}")
+def service_state(request: HTTPConnection) -> PlatformServiceState:
+    return cast(PlatformServiceState, request.app.state.services)
 
 
 def install_service_state(app: FastAPI, services: PlatformServiceState) -> None:
@@ -115,6 +120,3 @@ def install_service_state(app: FastAPI, services: PlatformServiceState) -> None:
     if missing:
         raise RuntimeError(f"Platform service assembly is incomplete: {', '.join(missing)}")
     app.state.services = services
-    # Retain existing infrastructure readers and dependency-injection entrypoints.
-    for name in PlatformServiceState.__annotations__:
-        setattr(app.state, name, getattr(services, name))

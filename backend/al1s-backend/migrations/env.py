@@ -5,7 +5,9 @@ from sqlalchemy import engine_from_config, pool
 
 from al1s.adapters.postgres import artifact_models as artifact_models
 from al1s.adapters.postgres import bot_models as bot_models
+from al1s.adapters.postgres import component_models as component_models
 from al1s.adapters.postgres import delivery_models as delivery_models
+from al1s.adapters.postgres import device_path_models as device_path_models
 from al1s.adapters.postgres import discord_forward_models as discord_forward_models
 from al1s.adapters.postgres import editor_models as editor_models
 from al1s.adapters.postgres import execution_models as execution_models
@@ -14,12 +16,15 @@ from al1s.adapters.postgres import lineup_models as lineup_models
 from al1s.adapters.postgres import lineup_workspace_models as lineup_workspace_models
 from al1s.adapters.postgres import maa_models as maa_models
 from al1s.adapters.postgres import maintenance_models as maintenance_models
+from al1s.adapters.postgres import meme_models as meme_models
 from al1s.adapters.postgres import models as postgres_models  # noqa: F401
 from al1s.adapters.postgres import mqtt_models as mqtt_models
 from al1s.adapters.postgres import notification_models as notification_models
+from al1s.adapters.postgres import quant_models as quant_models
 from al1s.adapters.postgres import release_models as release_models
 from al1s.adapters.postgres import review_models as review_models
 from al1s.adapters.postgres import scheduling_models as scheduling_models
+from al1s.adapters.postgres import setup_check_models as setup_check_models
 from al1s.adapters.postgres.base import Base
 from al1s.app.config import get_settings
 

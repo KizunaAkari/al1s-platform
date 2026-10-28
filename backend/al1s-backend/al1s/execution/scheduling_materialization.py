@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
+from al1s.components.maintenance_guard import admit_new_work, platform_accepts_work
 from al1s.execution.errors import ConflictError
 from al1s.execution.scheduling_base import SchedulingContext
 from al1s.execution.scheduling_helpers import (
@@ -37,6 +38,8 @@ class ScheduleMaterialization(SchedulingContext):
     ) -> list[MaterializedExecution]:
         now = self._now()
         with self._uow_factory() as uow:
+            if not platform_accepts_work(uow):
+                return []
             claimed = uow.occurrences.claim_due(
                 worker_id=worker_id,
                 now=now,
@@ -47,7 +50,20 @@ class ScheduleMaterialization(SchedulingContext):
         if not claimed:
             return []
         definitions = self._definitions.resolve_candidates(claimed)
+        if self._device_paths is not None:
+            requirements: dict[UUID, set[str]] = {}
+            for candidate_item in claimed:
+                device = candidate_item.task.requested_target_device_id
+                if device is not None and candidate_item.task.requested_terminal_id is None:
+                    requirements.setdefault(device, set()).update(
+                        definitions[
+                            candidate_item.occurrence.occurrence_id
+                        ].capability_requirements.provider_keys
+                    )
+            self._device_paths.qualify(requirements)
         with self._uow_factory() as uow:
+            if not platform_accepts_work(uow):
+                return []
             resources = uow.executions.list_eligible_resources(
                 requested_terminal_ids={
                     item.task.requested_terminal_id
@@ -190,6 +206,7 @@ class ScheduleMaterialization(SchedulingContext):
             record_video=prepared.task.record_video,
             created_at=now,
         )
+        admit_new_work(uow, execution.terminal_id, execution.target_device_id)
         uow.executions.add(execution)
         # Attempts and snapshots both reference the execution.  Keep this
         # transaction atomic while making the FK boundary explicit instead of

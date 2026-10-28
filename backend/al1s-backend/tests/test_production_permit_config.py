@@ -39,7 +39,10 @@ def test_production_rejects_public_and_short_other_secrets(field):
 
 @pytest.mark.parametrize("field", sorted(PRIVATE_SECRETS))
 def test_production_rejects_example_placeholders(field):
-    values = {**PRIVATE_SECRETS, field: "change-me-test-fixture-placeholder-long-enough-to-pass-length"}
+    values = {
+        **PRIVATE_SECRETS,
+        field: "change-me-test-fixture-placeholder-long-enough-to-pass-length",
+    }
     with pytest.raises(ValidationError, match="production requires a private"):
         Settings(
             _env_file=None, environment="production", offline_permit_signing_key="a1b2c3d4" * 8,

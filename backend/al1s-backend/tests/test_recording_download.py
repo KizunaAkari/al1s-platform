@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -92,7 +93,8 @@ def test_truncated_store_range_rejected():
 def test_http_headers_range_and_credential_boundary():
     reader, store = Reader(), Store()
     app = FastAPI()
-    app.state.recording_downloads = RecordingDownloadService(reader, store)
+    app.state.services = SimpleNamespace()
+    app.state.services.recording_downloads = RecordingDownloadService(reader, store)
     app.include_router(router, prefix="/tasks")
 
     @app.exception_handler(ExecutionDomainError)

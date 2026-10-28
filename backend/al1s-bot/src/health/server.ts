@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 
 import type { Logger } from "../logger.js";
-import type { HealthState } from "./state.js";
+import type { HealthState, WorkerIdentity } from "./state.js";
 
 export class HealthServer {
   private server: Server | null = null;
@@ -10,7 +10,8 @@ export class HealthServer {
     private readonly host: string,
     private readonly port: number,
     private readonly state: HealthState,
-    private readonly logger: Logger
+    private readonly logger: Logger,
+    private readonly identity: () => WorkerIdentity | null = () => null
   ) {}
 
   public async start(): Promise<void> {
@@ -30,7 +31,7 @@ export class HealthServer {
         "Content-Type": "application/json",
         "Cache-Control": "no-store"
       });
-      response.end(JSON.stringify(this.state.snapshot()));
+      response.end(JSON.stringify(this.state.snapshot(this.identity())));
     });
 
     await new Promise<void>((resolve, reject) => {

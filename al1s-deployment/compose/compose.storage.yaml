@@ -1,0 +1,50 @@
+services:
+  storage:
+    container_name: al1s-platform-storage
+    image: ${AL1S_COMPONENT_S3_IMAGE:?set verified combined storage image}
+    environment:
+      S3_ACCESS_KEY: ${AL1S_S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${AL1S_S3_SECRET_KEY}
+    volumes:
+      - al1s-next-seaweed-master:/data/master
+      - al1s-next-seaweed-volume:/data/volume
+      - al1s-next-seaweed-filer:/data/filer
+      - s3-runtime-data:/data/s3
+    read_only: true
+    tmpfs: ["/tmp", "/run/al1s-storage"]
+    networks:
+      control:
+        aliases: [seaweed-master, seaweed-volume, seaweed-filer, seaweed-s3, al1s-platform-storage-master, al1s-platform-storage-volume, al1s-platform-storage-filer, al1s-platform-storage-s3]
+    restart: unless-stopped
+    stop_grace_period: 120s
+    logging:
+      driver: syslog
+      options:
+        syslog-address: udp://host.docker.internal:15144
+        syslog-format: rfc5424micro
+        tag: "al1s/{{.Name}}"
+        cache-disabled: "true"
+  seaweed-master:
+    image: ${AL1S_LEGACY_S3_IMAGE:?retain original seaweed image}
+    profiles: [legacy-storage]
+  seaweed-volume:
+    image: ${AL1S_LEGACY_S3_IMAGE}
+    profiles: [legacy-storage]
+  seaweed-filer:
+    image: ${AL1S_LEGACY_S3_IMAGE}
+    profiles: [legacy-storage]
+  seaweed-s3:
+    image: ${AL1S_LEGACY_S3_IMAGE}
+    profiles: [legacy-storage]
+  backend:
+    depends_on: !override
+      postgres: {condition: service_healthy}
+      mosquitto: {condition: service_healthy}
+      storage: {condition: service_healthy}
+  s3-init:
+    depends_on: !override
+      storage: {condition: service_healthy}
+volumes:
+  s3-runtime-data:
+    external: true
+    name: ${AL1S_STORAGE_S3_DATA_VOLUME:?retain registered original S3 data volume}

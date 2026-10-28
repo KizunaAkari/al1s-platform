@@ -82,3 +82,7 @@ signing.properties
 keystore.properties
 *.sqlite-wal
 *.sqlite-shm
+
+# Local test workspaces and deployment selector journals/locks.
+.pytest-tmp*/
+.selector-state/

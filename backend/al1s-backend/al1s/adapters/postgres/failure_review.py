@@ -18,6 +18,7 @@ from al1s.adapters.postgres.models import BlobObjectRow as Blob
 from al1s.adapters.postgres.models import GcJobRow
 from al1s.adapters.postgres.scheduling_models import ExecutionAttemptRow as Attempt
 from al1s.adapters.postgres.scheduling_models import ExecutionRow as Execution
+from al1s.adapters.postgres.scheduling_models import ExecutionSnapshotRow as Snapshot
 from al1s.adapters.postgres.scheduling_models import TaskRequestRow as Task
 from al1s.execution.errors import ConflictError, NotFoundError
 from al1s.execution.failure_details import (
@@ -27,6 +28,11 @@ from al1s.execution.failure_details import (
 )
 from al1s.execution.recording_download import RecordingFile
 from al1s.execution.task_captures import task_captures
+from al1s.maa.task_failure_diagnostics import (
+    project_task_failure_contexts,
+    project_task_recognition_failures,
+)
+from al1s.maa.task_failure_geometry import project_task_failure_geometries
 
 
 def _attempt(task_id: UUID, attempt_id: UUID) -> Select[tuple[Attempt]]:
@@ -60,17 +66,22 @@ class PostgresFailureReview:
         task_id: UUID,
         cursor: UUID | None,
         now: datetime,
+        *,
+        execution_id: UUID | None = None,
     ) -> dict[str, Any]:
         query = (
-            select(Attempt, Lineup.id, Task.source_module)
+            select(Attempt, Lineup.id, Task.source_module, Snapshot.manifest)
             .select_from(Task)
             .outerjoin(Execution, Execution.task_request_id == Task.id)
             .outerjoin(Attempt, Attempt.execution_id == Execution.id)
+            .outerjoin(Snapshot, Snapshot.execution_id == Execution.id)
             .outerjoin(Lineup, (Lineup.task_id == Task.id) & (Task.source_module == "lineup"))
             .where(Task.id == task_id, Task.deleted_at.is_(None))
             .order_by(Attempt.id)
             .limit(21)
         )
+        if execution_id is not None:
+            query = query.where(Execution.id == execution_id)
         if cursor:
             query = query.where(Attempt.id > cursor)
         with self._sessions() as session:
@@ -98,6 +109,7 @@ class PostgresFailureReview:
                 else []
             )
             by_id = {item.attempt_id: item for item in reports}
+            manifests = {row[0].id: row[3] for row in rows if row[0] is not None}
             expired_images = expired_capture_references(session, reports)
             items = []
             for attempt in attempts[:20]:
@@ -109,10 +121,13 @@ class PostgresFailureReview:
                     else None
                 )
                 unavailable = expired_images.get(attempt.id, set())
+                geometries = project_task_failure_geometries(
+                    manifests.get(attempt.id) if source_module == "maa" else None, diagnostic,
+                )
                 details = [
                     replace(item, screenshot_id=None, screenshot_error="截图上传已失效或原图已过期")
                     if item.screenshot_id in unavailable
-                    else item
+                    else replace(item, recognition_geometry=geometries.get(str(item.screenshot_id)))
                     for item in failure_details(diagnostic)
                 ]
                 items.append(
@@ -127,6 +142,20 @@ class PostgresFailureReview:
                         "confirmed": bool(report and report.detail_confirmed_at),
                         "expired": expired,
                         "details": [asdict(item) for item in details],
+                        "recognition_failures": [
+                            item.model_dump()
+                            for item in project_task_recognition_failures(
+                                manifests.get(attempt.id) if source_module == "maa" else None,
+                                diagnostic,
+                            )
+                        ],
+                        "failure_contexts": [
+                            item.model_dump()
+                            for item in project_task_failure_contexts(
+                                manifests.get(attempt.id) if source_module == "maa" else None,
+                                diagnostic,
+                            )
+                        ],
                         "screenshots": [
                             asdict(item)
                             for item in task_captures(diagnostic)
