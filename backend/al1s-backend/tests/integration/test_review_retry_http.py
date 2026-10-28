@@ -19,6 +19,7 @@ from al1s.execution.scheduling_service import ExecutionSchedulingService
 from al1s.execution.scheduling_types import CreateTaskCommand, ExecutionResult, TaskType
 from al1s.infrastructure.readiness import ReadinessResult
 from al1s.lineup.definition import LineupDefinitionProvider
+from tests.integration.execution_support import _complete_attempt, _start_attempt
 from tests.integration.execution_support import clean_tables as clean_tables
 from tests.integration.execution_support import engine as engine
 from tests.integration.test_lineup_workspace import setup
@@ -34,13 +35,12 @@ def _row_counts(engine: Engine) -> tuple[int, int, int]:
         )
 
 
-def _materialize_and_fail(scheduling: ExecutionSchedulingService) -> UUID:
+def _materialize_and_fail(engine: Engine, scheduling: ExecutionSchedulingService) -> UUID:
     items = scheduling.materialize_due(worker_id=uuid4(), correlation_id=uuid4())
     assert len(items) == 1
     item = items[0]
-    scheduling.start_attempt(item.attempt.attempt_id, correlation_id=uuid4())
-    scheduling.complete_attempt(
-        item.attempt.attempt_id,
+    _start_attempt(engine, None, item.attempt.attempt_id, correlation_id=uuid4())
+    _complete_attempt(engine, None, item.attempt.attempt_id,
         result=ExecutionResult.FAILURE,
         error_code="failed",
         retryable=False,
@@ -54,7 +54,7 @@ def test_lineup_executions_reject_generic_snapshot_retry_without_creating_rows(
 ) -> None:
     sessions, terminal, record_ids, batch_scheduling = setup(engine, 1)
     LineupBatchCommands(sessions).create(record_ids, terminal, {}, "review-cr007-batch")
-    batch_execution_id = _materialize_and_fail(batch_scheduling)
+    batch_execution_id = _materialize_and_fail(engine, batch_scheduling)
 
     definitions = ExecutionDefinitionRegistry()
     definitions.register("lineup", LineupDefinitionProvider(LineupRepository(sessions)))
@@ -77,7 +77,7 @@ def test_lineup_executions_reject_generic_snapshot_retry_without_creating_rows(
         ),
         correlation_id=uuid4(),
     )
-    single_execution_id = _materialize_and_fail(single_scheduling)
+    single_execution_id = _materialize_and_fail(engine, single_scheduling)
 
     class Ready:
         def check(self) -> ReadinessResult:

@@ -18,7 +18,6 @@ from al1s.maa.types import (
     ApplicationRecord,
     QualificationKind,
     QualificationStatus,
-    ScriptPublicationImpact,
     ScriptQualificationReceipt,
     ScriptRecord,
     ScriptVersionRecord,
@@ -74,47 +73,6 @@ class MaaScriptPublicationService:
             recovery_resolver=recovery_resolver,
             now=self._now,
         )
-
-    def preview_publication(
-        self,
-        *,
-        script_id: UUID,
-        candidate_version_id: UUID,
-    ) -> ScriptPublicationImpact:
-        with self._uow_factory() as uow:
-            script = self._require_script(uow, script_id, for_update=False)
-            version = self._require_candidate_version(uow, script, candidate_version_id)
-            return self._impact_coordinator.preview(
-                uow,
-                script,
-                version,
-                lock_strategies=False,
-            )
-
-    def save_candidate(
-        self,
-        *,
-        script_id: UUID,
-        expected_script_version: int,
-        manifest: dict[str, Any],
-        correlation_id: UUID,
-    ) -> CandidateSaveResult:
-        now = self._now()
-        with self._uow_factory() as uow:
-            script = self._require_script(uow, script_id, for_update=True)
-            application = self._require_application(uow, script.application_id)
-            result = self.stage_candidate(
-                uow,
-                script=script,
-                application=application,
-                expected_script_version=expected_script_version,
-                manifest=manifest,
-                correlation_id=correlation_id,
-                now=now,
-                source="candidate_save",
-            )
-            uow.commit()
-            return result
 
     def stage_candidate(
         self,

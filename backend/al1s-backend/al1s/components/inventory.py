@@ -38,6 +38,7 @@ def native_entry(item: NativeComponent) -> ComponentInventoryEntry:
         runtime_version=item.runtime_version,
         qq_identity=item.qq_identity,
         qq_protocol_mode=item.qq_protocol_mode,
+        qq_quant_v1=item.qq_quant_v1,
         qq_client_version=item.qq_client_version,
         pmhq_version=item.pmhq_version,
     )

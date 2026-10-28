@@ -15,8 +15,10 @@ def test_bot_updates_require_admin_csrf_and_history_uses_fixed_bot_scope():
     calls = []
     settings = Settings(admin_password="private-admin-password", admin_cookie_secure=False)
     app = FastAPI()
+    app.state.services = SimpleNamespace()
     app.state.settings = settings
-    app.state.component_upgrades = SimpleNamespace(
+    app.state.services.settings = app.state.settings
+    app.state.services.component_upgrades = SimpleNamespace(
         store=SimpleNamespace(
             list_operations=lambda *args: (calls.append(args), OperationPage(items=[]))[1]
         )
@@ -51,12 +53,14 @@ def test_host_manifest_reads_registry_metadata_without_requiring_an_archive():
     row = ComponentRelease(**values)
     calls = []
     app = FastAPI()
+    app.state.services = SimpleNamespace()
     app.state.settings = SimpleNamespace(
         component_host=SimpleNamespace(
             token=Settings(admin_password="private-admin-password").admin_password
         )
     )
-    app.state.component_releases = SimpleNamespace(
+    app.state.services.settings = app.state.settings
+    app.state.services.component_releases = SimpleNamespace(
         store=SimpleNamespace(
             host_manifest=lambda identity: (calls.append(identity), row)[1],
         )
@@ -77,7 +81,8 @@ def test_bot_version_endpoint_defaults_to_five_and_caps_history_pages():
 
     calls = []
     app = FastAPI()
-    app.state.component_releases = SimpleNamespace(
+    app.state.services = SimpleNamespace()
+    app.state.services.component_releases = SimpleNamespace(
         list_bot=lambda *args: (calls.append(args), ReleasePage(items=[]))[1]
     )
     app.include_router(updates, prefix="/api/v1")

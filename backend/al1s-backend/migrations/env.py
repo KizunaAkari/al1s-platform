@@ -20,6 +20,7 @@ from al1s.adapters.postgres import meme_models as meme_models
 from al1s.adapters.postgres import models as postgres_models  # noqa: F401
 from al1s.adapters.postgres import mqtt_models as mqtt_models
 from al1s.adapters.postgres import notification_models as notification_models
+from al1s.adapters.postgres import quant_models as quant_models
 from al1s.adapters.postgres import release_models as release_models
 from al1s.adapters.postgres import review_models as review_models
 from al1s.adapters.postgres import scheduling_models as scheduling_models

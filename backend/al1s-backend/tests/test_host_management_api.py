@@ -15,12 +15,14 @@ from al1s.execution.host_management import HostManagerConnection
 
 def client_and_app():
     app = FastAPI()
+    app.state.services = SimpleNamespace()
     settings = Settings(admin_password="maintenance-test-password", admin_cookie_secure=False)
     app.state.settings = settings
+    app.state.services.settings = app.state.settings
     install_admin_auth(app, settings)
     app.include_router(router, prefix="/api/v1")
-    app.state.execution_resources = MagicMock()
-    app.state.execution_scheduling = MagicMock()
+    app.state.services.execution_resources = MagicMock()
+    app.state.services.execution_scheduling = MagicMock()
     return TestClient(app), app
 
 
@@ -33,7 +35,7 @@ def test_management_reads_and_writes_require_admin_and_csrf():
                        headers={"X-AL1S-CSRF": "1"}).status_code == 401
     assert client.post(base + "/commands", json={},
                        headers={"X-AL1S-CSRF": "1"}).status_code == 401
-    app.state.execution_resources.require_linux_terminal.assert_not_called()
+    app.state.services.execution_resources.require_linux_terminal.assert_not_called()
     client.post("/api/v1/auth/login", json={"password": "maintenance-test-password"},
                 headers={"X-AL1S-CSRF": "1"})
     assert client.post(base + "/commands", json={}).status_code == 403
@@ -48,6 +50,7 @@ def test_terminal_logs_are_admin_only_and_proxy_fixed_host_path():
     app.state.settings.host_managers = {
         terminal: HostManagerConnection(url="https://host:8771", token="x" * 32)
     }
+    app.state.services.settings = app.state.settings
     client.post("/api/v1/auth/login", json={"password": "maintenance-test-password"},
                 headers={"X-AL1S-CSRF": "1"})
     with patch("al1s.api.host_management.HostManagerClient") as host:
@@ -58,7 +61,7 @@ def test_terminal_logs_are_admin_only_and_proxy_fixed_host_path():
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "no-store"
     assert response.json()["lines"] == ["safe event"]
-    app.state.execution_resources.require_linux_terminal.assert_called_once_with(terminal)
+    app.state.services.execution_resources.require_linux_terminal.assert_called_once_with(terminal)
     host.return_value.request.assert_called_once_with("/v1/logs")
 
 
@@ -67,7 +70,7 @@ def test_impact_is_bounded_and_does_not_require_host_credentials():
     terminal = uuid4()
     client.post("/api/v1/auth/login", json={"password": "maintenance-test-password"},
                 headers={"X-AL1S-CSRF": "1"})
-    app.state.execution_scheduling.maintenance_impact.return_value = [
+    app.state.services.execution_scheduling.maintenance_impact.return_value = [
         {"execution_id": str(uuid4()), "name": f"task-{n}", "status": "running"}
         for n in range(101)
     ]
@@ -76,8 +79,8 @@ def test_impact_is_bounded_and_does_not_require_host_credentials():
     assert result.headers["cache-control"] == "no-store"
     assert len(result.json()["items"]) == 100
     assert result.json()["truncated"] is True
-    app.state.execution_resources.require_linux_terminal.assert_called_once_with(terminal)
-    app.state.execution_scheduling.maintenance_impact.assert_called_once_with(terminal)
+    app.state.services.execution_resources.require_linux_terminal.assert_called_once_with(terminal)
+    app.state.services.execution_scheduling.maintenance_impact.assert_called_once_with(terminal)
 
 
 def test_impact_repository_uses_one_filtered_bounded_join():

@@ -75,50 +75,6 @@ class MaaStrategyCommandService:
             integrity_error_mapper=self._strategy_name_conflict,
         )
 
-    def publish_strategy(
-        self,
-        *,
-        strategy_id: UUID,
-        expected_row_version: int,
-        start_script_id: UUID,
-        process_modules: Sequence[ProcessModuleInput],
-        end_script_id: UUID,
-        start_wait_after_ms: int,
-        default_parameters: dict[str, Any],
-        expected_impact_hash: str | None,
-        idempotency_key: str,
-        correlation_id: UUID,
-    ) -> MutationExecution:
-        return self._mutations.execute(
-            operation=f"maa.strategies.publish:{strategy_id}",
-            idempotency_key=idempotency_key,
-            request_payload={
-                **self._request_payload(
-                    application_id=None,
-                    name=None,
-                    start_script_id=start_script_id,
-                    process_modules=process_modules,
-                    end_script_id=end_script_id,
-                    start_wait_after_ms=start_wait_after_ms,
-                    default_parameters=default_parameters,
-                ),
-                "expected_row_version": expected_row_version,
-                "expected_impact_hash": expected_impact_hash,
-            },
-            mutate=lambda uow: self._publish_strategy(
-                uow,
-                strategy_id=strategy_id,
-                expected_row_version=expected_row_version,
-                start_script_id=start_script_id,
-                process_modules=process_modules,
-                end_script_id=end_script_id,
-                start_wait_after_ms=start_wait_after_ms,
-                default_parameters=default_parameters,
-                expected_impact_hash=expected_impact_hash,
-                correlation_id=correlation_id,
-            ),
-        )
-
     def save_strategy(
         self, *, strategy_id: UUID, expected_row_version: int,
         start_script_id: UUID, process_modules: Sequence[ProcessModuleInput],

@@ -111,18 +111,7 @@ class PlatformServiceState:
 
 
 def service_state(request: HTTPConnection) -> PlatformServiceState:
-    services = getattr(request.app.state, "services", None)
-    if isinstance(services, PlatformServiceState):
-        return services
-    # Independently mounted routers and existing test doubles retain their legacy state view.
-    return cast(PlatformServiceState, request.app.state)
-
-
-def validate_service_state(app: FastAPI) -> None:
-    services = getattr(app.state, "services", app.state)
-    missing = [name for name in PlatformServiceState.__annotations__ if not hasattr(services, name)]
-    if missing:
-        raise RuntimeError(f"Platform service assembly is incomplete: {', '.join(missing)}")
+    return cast(PlatformServiceState, request.app.state.services)
 
 
 def install_service_state(app: FastAPI, services: PlatformServiceState) -> None:
@@ -131,6 +120,3 @@ def install_service_state(app: FastAPI, services: PlatformServiceState) -> None:
     if missing:
         raise RuntimeError(f"Platform service assembly is incomplete: {', '.join(missing)}")
     app.state.services = services
-    # Retain existing infrastructure readers and dependency-injection entrypoints.
-    for name in PlatformServiceState.__annotations__:
-        setattr(app.state, name, getattr(services, name))

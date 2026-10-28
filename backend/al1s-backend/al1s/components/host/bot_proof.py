@@ -22,9 +22,12 @@ class RuntimeProof(Contract):
     qq_client_version: str | None = Field(default=None, min_length=1, max_length=64)
     pmhq_version: str | None = Field(default=None, min_length=1, max_length=64)
     qq_headed_v1: bool = False
+    qq_quant_v1: bool = False
 
     @model_validator(mode="after")
     def headed_contract(self) -> "RuntimeProof":
+        if self.qq_quant_v1 and (self.role != "qq" or self.qq_protocol_mode != "pmhq"):
+            raise ValueError("qq_quant_proof_invalid")
         if self.qq_protocol_mode == "pmhq" and (
             self.role != "qq" or not self.qq_headed_v1 or not self.qq_client_version
             or not self.pmhq_version or self.qq_device_identity_v1

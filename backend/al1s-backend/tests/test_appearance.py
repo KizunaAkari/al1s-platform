@@ -1,6 +1,7 @@
 import asyncio
 from io import BytesIO
 from threading import Event
+from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -43,11 +44,13 @@ def png() -> bytes:
 
 def test_background_is_public_but_upload_requires_admin_and_valid_image() -> None:
     app = FastAPI()
+    app.state.services = SimpleNamespace()
     store = MemoryImageStore()
-    app.state.appearance = AppearanceService(store)
+    app.state.services.appearance = AppearanceService(store)
     app.state.settings = Settings(
         admin_password="appearance-test-password", admin_cookie_secure=False
     )
+    app.state.services.settings = app.state.settings
     install_admin_auth(app, app.state.settings)
     app.include_router(router, prefix="/api/v1")
     with TestClient(app) as client:
@@ -85,8 +88,9 @@ def test_slow_background_store_does_not_block_async_requests() -> None:
             super().put(object_key, body, media_type)
 
     app = FastAPI()
+    app.state.services = SimpleNamespace()
     store = SlowStore()
-    app.state.appearance = AppearanceService(store)
+    app.state.services.appearance = AppearanceService(store)
     body = png()
 
     async def receive() -> dict[str, object]:

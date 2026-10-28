@@ -10,13 +10,26 @@ import structlog
 from websockets.asyncio.client import ClientConnection, connect
 
 from al1s.adapters.postgres.meme_settings import QqConnection
+from al1s.adapters.postgres.quant_settings import QuantSettingsRepository
 from al1s.meme_workshop.contracts import RenderedImage, RenderInputs
 from al1s.meme_workshop.copied_mentions import CopiedMentionError, resolve_copied_targets
+from al1s.meme_workshop.images import decode_image
 from al1s.meme_workshop.media_fetch import read_media
 from al1s.meme_workshop.onebot import OneBotClient, QqMessage, parse_event
 from al1s.meme_workshop.records import TemplateRecord
 from al1s.meme_workshop.service import MemeWorkshopService
+from al1s.quant.commands import QuantCommand
+from al1s.quant.gateway import QuantGateway
+from al1s.quant.process_client import QuantProcessClient
+from al1s.quant.qq_dispatch import QuantQqDispatcher
 from al1s.secrets.ports import SecretCipher
+
+
+def read_qq_avatar(user_id: str) -> bytes:
+    body = read_media(f"https://q1.qlogo.cn/g?b=qq&nk={user_id}&s=640")
+    if decode_image(body).size == (40, 40):
+        return read_media(f"https://q1.qlogo.cn/g?b=qq&nk={user_id}&s=100")
+    return body
 
 
 class DirectConnect(connect):
@@ -31,9 +44,23 @@ class QqWorker:
         cipher: SecretCipher,
         *,
         connections: Callable[[], Awaitable[list[QqConnection]]] | None = None,
+        quant_repository: QuantSettingsRepository | None = None,
+        quant_gateway: QuantGateway | None = None,
+        quant_process: QuantProcessClient | None = None,
+        quant_dispatch: Callable[[QqConnection, OneBotClient, QuantCommand], Awaitable[None]]
+        | None = None,
+        quant_sender: QuantQqDispatcher | None = None,
     ) -> None:
         self.workshop, self.cipher = workshop, cipher
         self._connections = connections
+        self._quant_repository, self._quant_gateway = quant_repository, quant_gateway
+        self._quant_process, self._quant_dispatch = quant_process, quant_dispatch
+        self._quant_sender = quant_sender
+        self._quant_sender_task: asyncio.Task[None] | None = None
+        self._clients: dict[UUID, OneBotClient] = {}
+        self._quant_ids: set[UUID] = set()
+        self._meme_ids: set[UUID] = set()
+        self._quant_tasks: set[asyncio.Task[None]] = set()
         self._stopped = False
         self._refreshing = False
         self._stop = asyncio.Event()
@@ -48,6 +75,13 @@ class QqWorker:
     def connection_count(self) -> int:
         return len(self._tasks)
 
+    def is_quant_connected(self, service_id: UUID, event_url: str | None) -> bool:
+        return bool(event_url and service_id in self._quant_ids and service_id in self._sockets
+                    and service_id in self._tasks
+                    and self._tasks[service_id][0].event_url == event_url
+                    and self._quant_gateway
+                    and self._quant_gateway.matches_connection(service_id, event_url))
+
     async def refresh(self) -> None:
         if self._stopped or self._refreshing:
             return
@@ -60,6 +94,34 @@ class QqWorker:
             )
             if self._stopped:
                 return
+            self._meme_ids = {row.service_id for row in rows}
+            desired = {row.service_id: row for row in rows}
+            quant_ids: set[UUID] = set()
+            if self._quant_repository and self._quant_gateway and self._quant_process:
+                try:
+                    quant_rows = await asyncio.to_thread(self._quant_repository.qq_connections)
+                    snapshots = await asyncio.to_thread(
+                        self._quant_repository.snapshots, [row.service_id for row in quant_rows]
+                    )
+                    for row in quant_rows:
+                        record = snapshots.get(row.service_id)
+                        existing = desired.get(row.service_id)
+                        if record is None or (existing and (existing.event_url != row.event_url
+                                                           or existing.base_url != row.base_url)):
+                            continue
+                        applied = await asyncio.to_thread(
+                            self._quant_process.activate, row.service_id, record)
+                        if applied == (record.row_version, record.mapping_version):
+                            self._quant_gateway.activate(row.service_id, record)
+                        elif (self._quant_gateway.applied_versions(row.service_id) != applied
+                              or not self._quant_gateway.matches_connection(
+                                  row.service_id, row.event_url)):
+                            continue
+                        desired.setdefault(row.service_id, row)
+                        quant_ids.add(row.service_id)
+                except Exception as exc:
+                    self.log.warning("quant_qq_configuration_unavailable", error=type(exc).__name__)
+            self._quant_ids = quant_ids
             templates = await asyncio.to_thread(
                 self.workshop.repository.list_templates, limit=500, enabled_only=True
             )
@@ -68,7 +130,6 @@ class QqWorker:
             self._keywords = {
                 word for template in templates for word in [template.keyword, *template.aliases]
             }
-            desired = {row.service_id: row for row in rows}
             for identity, (row, task) in list(self._tasks.items()):
                 if desired.get(identity) != row or task.done():
                     task.cancel()
@@ -83,6 +144,9 @@ class QqWorker:
             self._refreshing = False
 
     async def run(self) -> None:
+        if self._quant_sender:
+            self._quant_sender_task = asyncio.create_task(
+                self._quant_sender.run(self.quant_clients))
         while not self._stopped:
             try:
                 await self.refresh()
@@ -97,16 +161,33 @@ class QqWorker:
     async def stop(self) -> None:
         self._stopped = True
         self._stop.set()
+        if self._quant_sender:
+            self._quant_sender.stop()
         tasks = [task for _, task in self._tasks.values()]
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        quant_tasks = list(self._quant_tasks)
+        for task in quant_tasks:
+            task.cancel()
+        if quant_tasks:
+            await asyncio.gather(*quant_tasks, return_exceptions=True)
+        self._quant_tasks.clear()
+        if self._quant_sender_task:
+            await asyncio.gather(self._quant_sender_task, return_exceptions=True)
+            self._quant_sender_task = None
         self._tasks.clear()
         sockets = list(self._sockets.values())
         self._sockets.clear()
         if sockets:
             await asyncio.gather(*(socket.close() for socket in sockets), return_exceptions=True)
+        self._clients.clear()
+
+    def quant_clients(self) -> dict[UUID, OneBotClient]:
+        return {identity: client for identity, client in self._clients.items()
+                if identity in self._tasks and
+                self.is_quant_connected(identity, self._tasks[identity][0].event_url)}
 
     async def listen(self, row: QqConnection) -> None:
         try:
@@ -133,13 +214,12 @@ class QqWorker:
                     if self._stopped:
                         return
                     self._sockets[row.service_id] = socket
+                    self._clients[row.service_id] = client
                     async for body in socket:
                         if self._stopped:
                             return
                         try:
-                            message = parse_event(json.loads(body), self._keywords)
-                            if message:
-                                await self.handle(row, client, message)
+                            await self.handle_event(row, client, json.loads(body))
                         except (ValueError, TypeError):
                             self.log.warning(
                                 "meme_qq_event_rejected", service_id=str(row.service_id)
@@ -152,8 +232,44 @@ class QqWorker:
                 )
             finally:
                 self._sockets.pop(row.service_id, None)
+                self._clients.pop(row.service_id, None)
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), timeout=5)
+
+    async def handle_event(self, row: QqConnection, client: OneBotClient, event: object) -> None:
+        message = parse_event(event, self._keywords)
+        if message and row.service_id in self._meme_ids:
+            await self.handle(row, client, message)
+            return
+        if (row.service_id not in self._quant_ids or not self._quant_gateway
+                or not self._quant_repository or not self._quant_dispatch):
+            return
+        if not self._quant_gateway.matches_connection(row.service_id, row.event_url):
+            return
+        command = self._quant_gateway.dispatch(row.service_id, event, set())
+        if command is None or await asyncio.to_thread(
+            self._quant_repository.keyword_conflicts, command.normalized_keyword
+        ):
+            return
+        while len(self._quant_tasks) >= 128 and not self._stopped:
+            await asyncio.wait(self._quant_tasks, return_when=asyncio.FIRST_COMPLETED)
+        if self._stopped:
+            return
+        task = asyncio.create_task(self._run_quant(row, client, command))
+        self._quant_tasks.add(task)
+        task.add_done_callback(self._quant_tasks.discard)
+
+    async def _run_quant(
+        self, row: QqConnection, client: OneBotClient, command: QuantCommand
+    ) -> None:
+        try:
+            if self._quant_dispatch:
+                await self._quant_dispatch(row, client, command)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.log.warning("quant_qq_request_failed", service_id=str(row.service_id),
+                             error=type(exc).__name__)
 
     async def handle(self, row: QqConnection, client: OneBotClient, message: QqMessage) -> None:
         key = f"{row.service_id}:{message.source.target_id}:{message.source.sender_id}"
@@ -216,7 +332,7 @@ class QqWorker:
         avatars, images = await asyncio.gather(
             asyncio.gather(
                 *(
-                    asyncio.to_thread(read_media, f"https://q1.qlogo.cn/g?b=qq&nk={identity}&s=640")
+                    asyncio.to_thread(read_qq_avatar, identity)
                     for identity in avatar_ids
                 )
             ),

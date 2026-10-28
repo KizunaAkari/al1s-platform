@@ -17,10 +17,9 @@ async function main(): Promise<void> {
   const config = await provider.load();
   const logger = new Logger(config.logLevel);
   const health = new HealthState();
-  if (!provider.submitMessage || !provider.startIngress) throw new Error("platform_ingress_required");
   const deduplicator = new MessageDeduplicator(config.forward.dedupeTtlMs);
   const bridge = new DiscordRuleBridge(
-    config, deduplicator, health, logger, message => provider.submitMessage!(message),
+    config, deduplicator, health, logger, message => provider.submitMessage(message),
   );
   let stopIngress: (() => void) | undefined;
   const healthServer = new HealthServer(config.health.host, config.health.port, health, logger,
@@ -103,7 +102,6 @@ async function main(): Promise<void> {
   }
   stopHeartbeat = provider.startHeartbeat?.(() => health.platformSnapshot());
   try {
-    if (!provider.loadForwardRules) throw new Error("platform_rule_provider_required");
     const rules = await provider.loadForwardRules(startupAbort.signal);
     if (stopping) return;
     bridge.setRules(rules);
@@ -136,7 +134,7 @@ async function main(): Promise<void> {
       const sender = createMemeSender(config.discord.token, proxy.rest?.agent);
       memeSender = sender;
       runtime.memes = new MemeCommandService({
-        request: (path, init) => provider.memeRequest!(path, init),
+        request: (path, init) => provider.memeRequest(path, init),
         send: sender.send,
         avatarURL: sender.avatarURL,
         media: (url, signal) => readMemeMedia(url, signal, proxy.rest?.agent),

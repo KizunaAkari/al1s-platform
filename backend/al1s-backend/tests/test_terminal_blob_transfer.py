@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from types import TracebackType
+from types import SimpleNamespace, TracebackType
 from uuid import UUID, uuid4
 
 import httpx
@@ -121,8 +121,9 @@ def test_service_requires_assignment_and_bounds_each_range() -> None:
 def test_http_head_and_range_contract() -> None:
     terminal_id, blob, _store, service = _fixture()
     app = FastAPI()
-    app.state.terminal_blob_transfer = service
-    app.state.execution_resources = FakeResources(terminal_id)
+    app.state.services = SimpleNamespace()
+    app.state.services.terminal_blob_transfer = service
+    app.state.services.execution_resources = FakeResources(terminal_id)
     app.include_router(router, prefix="/api/v1/terminal")
 
     async def exercise() -> tuple[httpx.Response, httpx.Response]:

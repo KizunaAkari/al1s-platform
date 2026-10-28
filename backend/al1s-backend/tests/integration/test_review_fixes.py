@@ -22,7 +22,13 @@ from al1s.execution.delivery_types import (
 from al1s.execution.errors import ConflictError
 from al1s.execution.scheduling_types import ExecutionResult
 from al1s.infrastructure.scheduler_worker import build_runtime_worker
-from tests.integration.execution_support import _delivery_services, _prepare_terminal, _services
+from tests.integration.execution_support import (
+    _complete_attempt,
+    _delivery_services,
+    _prepare_terminal,
+    _services,
+    _start_attempt,
+)
 from tests.integration.execution_support import clean_tables as clean_tables
 from tests.integration.execution_support import engine as engine
 from tests.integration.test_lineup_workspace import setup
@@ -88,9 +94,8 @@ def test_legacy_review_refreshes_attention_and_preserves_raw_evidence_and_cas(en
     sessions, terminal, ids, scheduling = setup(engine, 1)
     task = LineupBatchCommands(sessions).create(ids, terminal, {}, "review")
     item = scheduling.materialize_due(worker_id=uuid4(), correlation_id=uuid4())[0]
-    scheduling.start_attempt(item.attempt.attempt_id, correlation_id=uuid4())
-    scheduling.complete_attempt(
-        item.attempt.attempt_id,
+    _start_attempt(engine, None, item.attempt.attempt_id, correlation_id=uuid4())
+    _complete_attempt(engine, None, item.attempt.attempt_id,
         result=ExecutionResult.SUCCESS,
         error_code=None,
         retryable=False,
@@ -127,7 +132,10 @@ def test_legacy_review_refreshes_attention_and_preserves_raw_evidence_and_cas(en
         record = session.get(LineupRecognitionRow, ids[0])
         assert not record.needs_attention
         version = record.row_version
-        assert session.scalar(select(TerminalReportRow)).result_diagnostic == {"lineup": raw}
+        assert session.scalar(select(TerminalReportRow).where(
+            TerminalReportRow.terminal_id == terminal,
+            TerminalReportRow.report_id == report.report_id,
+        )).result_diagnostic == {"lineup": raw}
     assert queries.task(task)["summary"]["needs_attention"] == 0
     assert not queries.task(task, category="attention")["items"]
     with pytest.raises(ConflictError):

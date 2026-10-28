@@ -293,13 +293,6 @@ class MaterializedExecution:
 
 
 @dataclass(frozen=True, slots=True)
-class AttemptCompletion:
-    attempt: ExecutionAttemptRecord
-    execution: ExecutionRecord
-    retry_attempt: ExecutionAttemptRecord | None
-
-
-@dataclass(frozen=True, slots=True)
 class LoopScheduleSpec:
     repeat_count: int
 

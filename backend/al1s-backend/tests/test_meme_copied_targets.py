@@ -10,7 +10,7 @@ from PIL import Image
 from al1s.adapters.postgres.meme_settings import QqConnection
 from al1s.meme_workshop.contracts import Layout, RenderedImage
 from al1s.meme_workshop.onebot import parse_event
-from al1s.meme_workshop.qq_worker import QqWorker
+from al1s.meme_workshop.qq_worker import QqWorker, read_qq_avatar
 from al1s.meme_workshop.records import TemplateRecord
 from al1s.meme_workshop.service import MemeWorkshopService
 
@@ -64,7 +64,9 @@ async def generation_case(monkeypatch, caption=False):
     workshop.repository.find_keyword.return_value = template
     workshop.render_command.return_value = RenderedImage(b"GIF", "image/gif", 64, 64)
     client.group_members.return_value = [{"user_id": 400, "nickname": "账号昵称", "card": "群名片"}]
-    media = MagicMock(return_value=b"target-bytes")
+    target = BytesIO()
+    Image.new("RGB", (64, 64), "red").save(target, "PNG")
+    media = MagicMock(return_value=target.getvalue())
     monkeypatch.setattr("al1s.meme_workshop.qq_worker.read_media", media)
     row = QqConnection(uuid4(), uuid4(), 1, "ws://gateway:3001", "http://gateway:3000", 5, None)
     worker = QqWorker(workshop, MagicMock())
@@ -76,7 +78,7 @@ async def generation_case(monkeypatch, caption=False):
     else:
         client.group_members.assert_called_once_with("300")
         media.assert_called_once_with("https://q1.qlogo.cn/g?b=qq&nk=400&s=640")
-        assert supplied.avatars == [b"target-bytes"] and supplied.texts == []
+        assert supplied.avatars == [target.getvalue()] and supplied.texts == []
     assert workshop.render_command.call_args.kwargs["selected_template"] is template
 
 
@@ -86,6 +88,23 @@ def test_copied_group_name_uses_the_resolved_qq_and_a_frozen_template(monkeypatc
 
 def test_caption_preserves_at_text_without_group_member_queries(monkeypatch):
     asyncio.run(generation_case(monkeypatch, caption=True))
+
+
+@pytest.mark.parametrize("original_size", [40, 640])
+def test_qq_avatar_retries_100_only_for_the_40_pixel_response(monkeypatch, original_size):
+    def png(size, color):
+        output = BytesIO()
+        Image.new("RGB", (size, size), color).save(output, "PNG")
+        return output.getvalue()
+
+    original, fallback = png(original_size, "red"), png(100, "blue")
+    fetch = MagicMock(side_effect=[original, fallback])
+    monkeypatch.setattr("al1s.meme_workshop.qq_worker.read_media", fetch)
+    result = read_qq_avatar("512004594")
+    assert result == (fallback if original_size == 40 else original)
+    urls = [call.args[0] for call in fetch.call_args_list]
+    assert urls == ["https://q1.qlogo.cn/g?b=qq&nk=512004594&s=640"] + (
+        ["https://q1.qlogo.cn/g?b=qq&nk=512004594&s=100"] if original_size == 40 else [])
 
 
 def test_avatar_composition_accepts_an_unspaced_copied_target_and_keeps_text():

@@ -26,3 +26,12 @@ def test_headed_preflight_rejects_direct_runtime_and_ignores_direct_pending():
     assert "qq_headed_runtime_required" in compatible_release(current, release)
     release.runtime_version = "2.0.0"
     assert compatible_release(current, release) == []
+    release.runtime_version = "2.0.1"
+    assert compatible_release(current, release) == []
+    release.runtime_version = "2.1.0"
+    assert compatible_release(current, release) == []
+    release.runtime_version = "2.99.0"
+    assert "qq_headed_runtime_required" in compatible_release(current, release)
+    current.qq_quant_v1 = True
+    release.runtime_version = "2.0.1"
+    assert "qq_quant_runtime_required" in compatible_release(current, release)

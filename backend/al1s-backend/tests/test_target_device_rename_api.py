@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -26,7 +27,8 @@ def test_logical_phone_rename_route_passes_version_and_returns_identity() -> Non
         deleted_at=None,
     )
     app = FastAPI()
-    app.state.execution_resources = service
+    app.state.services = SimpleNamespace()
+    app.state.services.execution_resources = service
 
     @app.middleware("http")
     async def request_identity(request: Request, call_next):

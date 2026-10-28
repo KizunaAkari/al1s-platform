@@ -2,6 +2,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from threading import Barrier
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -12,8 +13,8 @@ from sqlalchemy import create_engine, event, insert, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
-from al1s.adapters.postgres.editor_repository import EditorSqlTransaction
 from al1s.adapters.postgres.editor_models import EditorSessionRow
+from al1s.adapters.postgres.editor_repository import EditorSqlTransaction
 from al1s.adapters.postgres.execution_models import (
     TargetDeviceRow,
     TerminalCapabilityProfileRow,
@@ -143,7 +144,8 @@ def test_mode_change_waits_for_editor_release(environment):
 def test_http_summary_never_exposes_secret_and_uses_bounded_query(environment):
     service, terminal, device, _, engine = environment
     app = FastAPI()
-    app.state.editor_sessions = service
+    app.state.services = SimpleNamespace()
+    app.state.services.editor_sessions = service
     app.include_router(router)
 
     @app.exception_handler(ExecutionDomainError)

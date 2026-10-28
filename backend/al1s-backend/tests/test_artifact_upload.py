@@ -253,7 +253,9 @@ def test_async_response_precedes_storage_io_and_duplicate_does_not_schedule_twic
     service, _, _ = _service()
     terminal_id = uuid4()
     artifact = _create(service, terminal_id, uuid4()).artifact
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(artifact_uploads=service)))
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        services=SimpleNamespace(artifact_uploads=service)
+    )))
     monkeypatch.setattr(api, "authenticated_terminal_id", lambda *args: terminal_id)
     calls = []
     monkeypatch.setattr(service, "complete", lambda **kwargs: calls.append(kwargs))

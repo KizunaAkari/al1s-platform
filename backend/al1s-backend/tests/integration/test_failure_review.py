@@ -1,6 +1,7 @@
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -245,7 +246,8 @@ def setup_failure(
     store = Store()
     repository = PostgresFailureReview(sessions)
     app = FastAPI()
-    app.state.failure_reviews = FailureReviewService(repository, store, lambda: now)
+    app.state.services = SimpleNamespace()
+    app.state.services.failure_reviews = FailureReviewService(repository, store, lambda: now)
     app.include_router(router, prefix="/tasks")
 
     @app.exception_handler(ExecutionDomainError)

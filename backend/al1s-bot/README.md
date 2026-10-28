@@ -6,7 +6,7 @@ Bot 配置只需 Discord Token 与应用 ID。来源服务器、频道、触发�
 
 队列中的历史格式消息不会按新规则重放；Worker 将其加密隔离并记录 `legacy_path_retired`。已隔离内容按现有队列保留策略处理，不输出正文到普通日志。
 
-生产部署使用 [Bot Compose](../../al1s-deployment/bots/compose.yaml)，配置从平台 Bot Worker 接口获取。`BOT_RUNTIME_CONFIG_PATH` 只供独立本地开发。Worker 健康状态不等于 Discord 账号或目标通知通道可用。
+正式Worker仅支持平台连接，使用 [Bot Compose](../../al1s-deployment/bots/compose.yaml) 并从平台 Bot Worker 接口获取配置；缺少`AL1S_CONTROL_BASE_URL`时在启动前明确拒绝。`BOT_RUNTIME_CONFIG_PATH`只用于`runtimeEnvironment`配合`loadConfig`的本地解析检查，不支持脱离平台完整运行。Worker 健康状态不等于 Discord 账号或目标通知通道可用。
 
 ## 本地检查和容器构建
 

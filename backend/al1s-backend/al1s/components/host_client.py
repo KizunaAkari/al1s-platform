@@ -29,6 +29,7 @@ class HostInventoryItem(Contract):
     runtime_version: str | None = None
     qq_identity: QqIdentitySummary | None = None
     qq_protocol_mode: Literal["direct", "pmhq"] = "direct"
+    qq_quant_v1: bool = False
     qq_client_version: str | None = Field(default=None, max_length=64)
     pmhq_version: str | None = Field(default=None, max_length=64)
 

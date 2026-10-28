@@ -1,5 +1,7 @@
 import re
 from urllib.parse import urlencode
+from uuid import UUID
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from starlette.concurrency import run_in_threadpool
@@ -15,10 +17,11 @@ ADMIN_PATH = re.compile(
 WORKER_PATH = re.compile(rf"(?:catalog|claim|render|{UUID_PART}/(?:send|result))\Z")
 
 
-async def forward(request: Request, path: str, platform: str | None = None) -> Response:
+async def forward(request: Request, path: str, platform: str | None = None,
+                  max_body_bytes: int = 56 * 1024 * 1024) -> Response:
     body = bytearray()
     async for chunk in request.stream():
-        if len(body) + len(chunk) > 56 * 1024 * 1024:
+        if len(body) + len(chunk) > max_body_bytes:
             raise HTTPException(413, "表情请求超过大小限制")
         body.extend(chunk)
     if any(key not in {"after_id", "limit"} for key in request.query_params):
@@ -55,6 +58,36 @@ async def forward(request: Request, path: str, platform: str | None = None) -> R
         media_type=result.media_type,
         headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
     )
+
+
+@router.api_route(
+    "/bots/quant/settings/{service_id}", methods=["GET", "PUT"], include_in_schema=False
+)
+async def quant_forward(service_id: UUID, request: Request) -> Response:
+    if request.query_params:
+        raise HTTPException(400, "invalid_quant_query")
+    return await forward(request, f"/api/v1/bots/quant/settings/{service_id}", "qq", 65536)
+
+
+@router.get("/bots/quant/status", include_in_schema=False)
+async def quant_status_forward(request: Request) -> Response:
+    if request.query_params:
+        raise HTTPException(400, "invalid_quant_query")
+    return await forward(request, "/api/v1/bots/quant/status", "qq", 0)
+
+
+@router.get("/bots/quant/credentials", include_in_schema=False)
+async def quant_credentials_status(request: Request) -> Response:
+    if request.query_params:
+        raise HTTPException(400, "invalid_quant_query")
+    return await forward(request, "/api/v1/bots/quant/credentials", "qq", 0)
+
+
+@router.put("/bots/quant/credentials/{provider}", include_in_schema=False)
+async def quant_credentials_save(provider: Literal["tushare", "gugudata"], request: Request) -> Response:
+    if request.query_params:
+        raise HTTPException(400, "invalid_quant_query")
+    return await forward(request, f"/api/v1/bots/quant/credentials/{provider}", "qq", 4096)
 
 
 @router.api_route(

@@ -1,0 +1,10 @@
+ARG BASE_IMAGE=al1s-platform:moyu-20261021
+FROM ${BASE_IMAGE}
+COPY --from=backend --chown=al1s:al1s al1s/api/meme_proxy.py /app/al1s/api/meme_proxy.py
+COPY --from=backend --chown=al1s:al1s al1s/components/contracts.py al1s/components/operations.py al1s/components/host_client.py al1s/components/types.py al1s/components/inventory.py /app/al1s/components/
+COPY --from=backend --chown=al1s:al1s al1s/adapters/postgres/quant_models.py /app/al1s/adapters/postgres/quant_models.py
+COPY --from=backend --chown=al1s:al1s migrations/env.py /app/migrations/env.py
+COPY --from=backend --chown=al1s:al1s migrations/versions/20261027_0058_qq_quant.py /app/migrations/versions/20261027_0058_qq_quant.py
+COPY --from=backend --chown=al1s:al1s migrations/versions/20261028_0059_quant_sources.py /app/migrations/versions/20261028_0059_quant_sources.py
+COPY --from=frontend --chown=al1s:al1s . /app/frontend/
+RUN python -c "from al1s.api.meme_proxy import router; assert any(r.path == '/bots/quant/status' for r in router.routes)"

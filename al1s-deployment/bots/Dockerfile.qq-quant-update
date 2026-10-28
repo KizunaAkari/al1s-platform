@@ -1,0 +1,35 @@
+ARG QQ_BASE=al1s-plachta:qq-avatar-fallback-20261023
+FROM rust:1.95-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1 AS quant-build
+ENV CARGO_BUILD_JOBS=2 CARGO_PROFILE_RELEASE_DEBUG=0
+RUN apt-get update && apt-get install -y --no-install-recommends python3-venv python3-dev && rm -rf /var/lib/apt/lists/*
+RUN python3 -m venv /opt/build && /opt/build/bin/pip install maturin==1.11.5
+WORKDIR /src
+ADD --checksum=sha256:2c024987e6893c40964462fd4018beb040ec60563d25a8a75a360f8218f06ab4 https://files.pythonhosted.org/packages/42/16/1a95be1dccfb3ca362bef149edf0ee0f036a833192f954d1148011727072/akquant-0.3.71.tar.gz /tmp/source.tar.gz
+RUN tar -xzf /tmp/source.tar.gz
+COPY patch_akquant.py /tmp/patch.py
+RUN /opt/build/bin/python /tmp/patch.py
+WORKDIR /src/akquant-0.3.71
+RUN /opt/build/bin/maturin build --release --locked --out /tmp/wheels
+
+FROM ${QQ_BASE}
+USER root
+COPY requirements.quant.lock /tmp/requirements.quant.lock
+COPY --from=quant-build /tmp/wheels/ /tmp/quant-wheels/
+RUN python3 -m venv /opt/al1s-quant-venv \
+ && /opt/al1s-quant-venv/bin/pip install --no-cache-dir -r /tmp/requirements.quant.lock \
+ && /opt/al1s-quant-venv/bin/pip install --no-cache-dir --no-deps /tmp/quant-wheels/*.whl \
+ && /opt/al1s-quant-venv/bin/pip check \
+ && useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin al1s-quant \
+ && install -d -m 0700 -o al1s-quant -g al1s-quant /run/al1s-quant \
+ && rm -rf /tmp/quant-wheels
+COPY --from=backend al1s/quant/ /opt/al1s/al1s/quant/
+COPY --from=backend al1s/adapters/postgres/quant_*.py /opt/al1s/al1s/adapters/postgres/
+COPY --from=backend al1s/api/quant.py /opt/al1s/al1s/api/quant.py
+COPY --from=backend al1s/meme_workshop/qq_worker.py al1s/meme_workshop/runtime.py al1s/meme_workshop/runtime_main.py al1s/meme_workshop/runtime_probe.py al1s/meme_workshop/runtime_identity.py /opt/al1s/al1s/meme_workshop/
+COPY --from=backend al1s/bots/qq_headed/startup.py /opt/al1s/al1s/bots/qq_headed/startup.py
+COPY qq-headed-supervisord.conf /etc/al1s-qq-supervisord.conf
+RUN python -c "import json,hashlib,pathlib; root=pathlib.Path('/opt/al1s/al1s'); p=pathlib.Path('/opt/al1s/runtime-manifest.json'); m=json.loads(p.read_text()); m.update(runtime_version='2.1.0',qq_quant_v1=True,source_sha256=hashlib.sha256(b''.join(f.read_bytes() for f in sorted(root.rglob('*.py')))).hexdigest(),requirements_sha256=hashlib.sha256(pathlib.Path('/tmp/requirements.lock').read_bytes()+pathlib.Path('/tmp/requirements.quant.lock').read_bytes()).hexdigest()); p.write_text(json.dumps(m))"
+LABEL org.al1s.runtime-version=2.1.0 org.al1s.qq-quant=1
+RUN python -m al1s.meme_workshop.runtime_probe \
+ && python -c "import al1s.meme_workshop.runtime_main" \
+ && /opt/al1s-quant-venv/bin/python -c "from al1s.quant.provider_routing import PROVIDERS; from al1s.quant.socket_runtime import run; from al1s.adapters.postgres.quant_credentials import QuantCredentials; assert len(PROVIDERS) == 5"

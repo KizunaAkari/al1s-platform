@@ -3,6 +3,8 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pytest
+
 from al1s.components.contracts import ComponentOperation, ComponentRelease, ComponentTarget
 from al1s.components.host.bot_deployment import BotDeployment, BotDeploymentSettings
 from al1s.components.host.bot_driver import BotUpgradeDriver
@@ -30,6 +32,28 @@ def test_registered_bot_compose_only_recreates_selected_service(tmp_path):
     args = runner.run.call_args.args[0]
     assert args[-1] == "llbot" and "--no-deps" in args and "-p" in args
     assert "discord-worker" not in args and str(selectors) in args
+
+
+def test_selector_preserves_and_validates_headed_mode(tmp_path):
+    compose = tmp_path / "compose.yaml"
+    compose.write_text("services: {}")
+    env = tmp_path / "bot.env"
+    env.write_text("")
+    selectors = tmp_path / "images.env"
+    selectors.write_text("AL1S_QQ_BOT_IMAGE=al1s-plachta:qq-old\n"
+                         "AL1S_DISCORD_WORKER_IMAGE=al1s-plachta:dd-old\n"
+                         "AL1S_QQ_PROTOCOL_MODE=pmhq\n")
+    settings = BotDeploymentSettings(deployment_root=tmp_path, selectors_file=selectors,
+        registrations={a: {"compose_files": [compose], "env_files": [env]}
+                       for a in ("qq", "discord")})
+    deployment = BotDeployment(settings, MagicMock())
+    values = deployment.selectors()
+    assert values["AL1S_QQ_PROTOCOL_MODE"] == "pmhq"
+    deployment.write_selectors({**values, "AL1S_QQ_BOT_IMAGE": "al1s-plachta:qq-new"})
+    assert deployment.selectors()["AL1S_QQ_PROTOCOL_MODE"] == "pmhq"
+    selectors.write_text(selectors.read_text() + "AL1S_QQ_PROTOCOL_MODE=direct\n")
+    with pytest.raises(ValueError, match="invalid_bot_selector"):
+        deployment.selectors()
 
 
 def upgrade_payload():

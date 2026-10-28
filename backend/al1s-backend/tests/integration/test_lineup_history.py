@@ -10,6 +10,7 @@ from al1s.adapters.postgres.scheduling_task_repository import PostgresTaskReposi
 from al1s.api.tasks import _history_response
 from al1s.execution.scheduling_helpers import _task_history_management
 from al1s.execution.scheduling_types import ExecutionResult
+from tests.integration.execution_support import _complete_attempt, _start_attempt
 from tests.integration.execution_support import clean_tables as clean_tables
 from tests.integration.execution_support import engine as engine
 from tests.integration.test_lineup_workspace import setup
@@ -47,10 +48,9 @@ def test_batch_history_aggregates_all_images_in_two_queries(engine, first_result
     for index, result in enumerate([first_result, ExecutionResult.SUCCESS]):
         item = scheduling.materialize_due(worker_id=uuid4(), correlation_id=uuid4())[0]
         assert history().batch_summary.execution_status == "waiting"
-        scheduling.start_attempt(item.attempt.attempt_id, correlation_id=uuid4())
+        _start_attempt(engine, None, item.attempt.attempt_id, correlation_id=uuid4())
         assert history().batch_summary.execution_status == "running"
-        scheduling.complete_attempt(
-            item.attempt.attempt_id,
+        _complete_attempt(engine, None, item.attempt.attempt_id,
             result=result,
             error_code="test" if result is ExecutionResult.FAILURE else None,
             retryable=False,

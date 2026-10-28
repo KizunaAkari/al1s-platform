@@ -16,6 +16,7 @@ from al1s.components.host.journal import HostJournal
 SERVICES = {"qq": "llbot", "discord": "discord-worker"}
 NAMES = {"qq": "al1s-bot-qq", "discord": "al1s-bot-discord"}
 SELECTORS = {"qq": "AL1S_QQ_BOT_IMAGE", "discord": "AL1S_DISCORD_WORKER_IMAGE"}
+QQ_MODE_SELECTOR = "AL1S_QQ_PROTOCOL_MODE"
 
 
 class BotRegistration(BaseModel):
@@ -120,12 +121,22 @@ class BotDeployment:
             if not line.strip() or line.startswith("#"):
                 continue
             key, _, value = line.partition("=")
-            if key not in SELECTORS.values() or not value or any(c.isspace() for c in value):
+            if key in values or key not in {*SELECTORS.values(), QQ_MODE_SELECTOR}:
                 raise ValueError("invalid_bot_selector")
             values[key] = value
-        if set(values) != set(SELECTORS.values()):
-            raise ValueError("incomplete_bot_selectors")
+        self._validate_selectors(values)
         return values
+
+    @staticmethod
+    def _validate_selectors(values: dict[str, str]) -> None:
+        if not set(SELECTORS.values()) <= set(values) or set(values) - {
+            *SELECTORS.values(), QQ_MODE_SELECTOR
+        }:
+            raise ValueError("incomplete_bot_selectors")
+        if any(not value or any(c.isspace() for c in value) for value in values.values()):
+            raise ValueError("invalid_bot_selector")
+        if QQ_MODE_SELECTOR in values and values[QQ_MODE_SELECTOR] not in {"direct", "pmhq"}:
+            raise ValueError("invalid_bot_selector")
 
     def change_image(self, alias: BotAlias, image: str) -> None:
         with HostJournal(self.settings.selectors_file.parent / ".selector-state").exclusive():
@@ -143,8 +154,7 @@ class BotDeployment:
             raise ValueError("unexpected_bot_compose_change")
 
     def write_selectors(self, values: dict[str, str]) -> None:
-        if set(values) != set(SELECTORS.values()):
-            raise ValueError("incomplete_bot_selectors")
+        self._validate_selectors(values)
         path = self.settings.selectors_file
         temporary = path.with_name(".bots-" + str(uuid4()) + ".tmp")
         temporary.write_text(

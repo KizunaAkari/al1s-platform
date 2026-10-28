@@ -24,7 +24,9 @@ def version(revision: int) -> SimpleNamespace:
 
 
 def request_for(service: Mock) -> SimpleNamespace:
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(maa_catalog=service)))
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        services=SimpleNamespace(maa_catalog=service)
+    )))
 
 
 def test_script_versions_endpoint_defaults_to_ascending_and_preserves_cursor() -> None:

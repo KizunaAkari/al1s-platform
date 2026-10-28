@@ -3,13 +3,14 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
+from starlette.requests import HTTPConnection
 
 from al1s.app import factory
 from al1s.app.config import Settings
 from al1s.app.service_state import (
     PlatformServiceState,
     install_service_state,
-    validate_service_state,
+    service_state,
 )
 
 
@@ -38,13 +39,18 @@ def test_initialization_failure_closes_owned_engine_and_readiness(
     engine.dispose.assert_called_once_with()
 
 
-def test_service_state_validation_names_missing_dependency() -> None:
-    with pytest.raises(RuntimeError, match="settings"):
-        validate_service_state(FastAPI())
-
-
 def test_partial_typed_assembly_is_not_published() -> None:
     app = FastAPI()
     with pytest.raises(RuntimeError, match="settings"):
         install_service_state(app, PlatformServiceState())
     assert not hasattr(app.state, "services")
+
+
+def test_complete_assembly_uses_one_service_entry_without_mirroring_fields() -> None:
+    app = FastAPI()
+    services = PlatformServiceState()
+    for name in PlatformServiceState.__annotations__:
+        setattr(services, name, object())
+    install_service_state(app, services)
+    assert service_state(HTTPConnection({"type": "http", "app": app})) is services
+    assert not hasattr(app.state, "editor_sessions")

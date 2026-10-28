@@ -7,8 +7,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
+from al1s.adapters.postgres.quant_settings import QuantSettingsRepository
 from al1s.api.database_errors import install_database_error_handlers, internal_error_response
 from al1s.api.meme_workshop import router
+from al1s.api.quant import router as quant_router
 from al1s.bots.errors import BotDomainError
 from al1s.bots.qq_identity.contracts import QqIdentityError
 from al1s.bots.qq_identity.repository import QqIdentityRepository
@@ -18,6 +20,8 @@ from al1s.meme_workshop.qq_worker import QqWorker
 from al1s.meme_workshop.runtime_identity import read_runtime_identity
 from al1s.meme_workshop.runtime_roles import RuntimeRole
 from al1s.meme_workshop.service import MemeWorkshopService
+from al1s.quant.gateway import QuantGateway
+from al1s.quant.process_client import QuantProcessClient
 
 
 def create_runtime_app(
@@ -28,6 +32,10 @@ def create_runtime_app(
     *,
     role: RuntimeRole = "combined",
     identity_repository: QqIdentityRepository | None = None,
+    quant_settings: QuantSettingsRepository | None = None,
+    quant_gateway: QuantGateway | None = None,
+    quant_process: QuantProcessClient | QuantGateway | None = None,
+    quant_credentials=None,
 ) -> FastAPI:
     if len(control_token.encode()) < 32:
         raise ValueError("meme_control_token_too_short")
@@ -49,6 +57,13 @@ def create_runtime_app(
     app.include_router(router, prefix="/api/v1")
     if role == "qq":
         app.include_router(identity_router(identity_repository))
+        if quant_settings is not None and quant_gateway is not None:
+            app.state.quant_settings = quant_settings
+            app.state.quant_gateway = quant_gateway
+            app.state.quant_process = quant_process
+            app.state.quant_credentials = quant_credentials
+            app.state.quant_worker = qq_worker
+            app.include_router(quant_router, prefix="/api/v1")
 
     @app.exception_handler(QqIdentityError)
     async def identity_error(_request: Request, error: QqIdentityError) -> JSONResponse:

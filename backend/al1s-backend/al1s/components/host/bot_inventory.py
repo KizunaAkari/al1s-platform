@@ -55,6 +55,7 @@ def bot_inventory(deployment: BotDeployment) -> list[dict[str, object]]:
                     version=proof.native_version,
                     runtime_version=proof.runtime_version,
                     qq_protocol_mode=proof.qq_protocol_mode,
+                    qq_quant_v1=proof.qq_quant_v1,
                     qq_client_version=proof.qq_client_version,
                     pmhq_version=proof.pmhq_version,
                     qq_identity=read_qq_identity_summary(deployment).model_dump()

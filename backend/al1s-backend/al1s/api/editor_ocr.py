@@ -22,7 +22,7 @@ async def test_ocr(session_id: UUID, request: Request) -> dict[str, object]:
     if request.headers.get("authorization"):
         raise HTTPException(403, "Operator context required")
     session, connection = await run_in_threadpool(
-        request.app.state.editor_sessions.detail,
+        service_state(request).editor_sessions.detail,
         session_id,
     )
     target = connection.get("ocr_ws_url") if connection else None

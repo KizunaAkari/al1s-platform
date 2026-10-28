@@ -15,13 +15,17 @@ from tests.test_component_inventory import release
 
 def test_inventory_is_admin_only_and_internal_downloads_require_independent_host_identity():
     app = FastAPI()
+    app.state.services = SimpleNamespace()
     settings = Settings(
         admin_password="private-admin-password",
         admin_cookie_secure=False,
         component_host=HostManagerConnection(url="https://host.local", token="x" * 32),
     )
     app.state.settings = settings
-    app.state.component_inventory = SimpleNamespace(list=lambda *_: InventoryPage(items=[]))
+    app.state.services.settings = app.state.settings
+    app.state.services.component_inventory = SimpleNamespace(
+        list=lambda *_: InventoryPage(items=[])
+    )
     record = ComponentRelease(
         **release().model_dump(),
         state="published",
@@ -29,7 +33,7 @@ def test_inventory_is_admin_only_and_internal_downloads_require_independent_host
         blob_id=uuid4(),
         created_at=datetime.now(UTC),
     )
-    app.state.component_releases = SimpleNamespace(
+    app.state.services.component_releases = SimpleNamespace(
         store=SimpleNamespace(host_manifest=lambda *_: record)
     )
     app.include_router(router, prefix="/api/v1")

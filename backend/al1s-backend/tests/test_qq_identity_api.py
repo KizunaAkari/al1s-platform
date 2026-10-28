@@ -78,6 +78,7 @@ def test_public_identity_api_requires_admin_and_csrf(tmp_path, monkeypatch):
     settings = Settings(admin_password="private-admin-password", admin_cookie_secure=False)
     app = FastAPI()
     app.state.settings = settings
+    app.state.services = SimpleNamespace(settings=settings)
     app.include_router(qq_device_identity.router, prefix="/api/v1")
     install_admin_auth(app, settings)
     api = TestClient(app)

@@ -21,6 +21,7 @@ class NativeComponent:
     runtime_version: str | None = None
     qq_identity: QqIdentitySummary | None = None
     qq_protocol_mode: Literal["direct", "pmhq"] = "direct"
+    qq_quant_v1: bool = False
     qq_client_version: str | None = None
     pmhq_version: str | None = None
 

@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import httpx
@@ -11,10 +12,11 @@ from al1s.meme_workshop.transport import BackendResponse
 def test_each_platform_uses_only_its_own_backend():
     async def run():
         app = FastAPI()
+        app.state.services = SimpleNamespace()
         qq, discord = MagicMock(), MagicMock()
         qq.forward.return_value = BackendResponse(200, b"QQ", "image/png")
         discord.forward.return_value = BackendResponse(200, b"DC", "image/png")
-        app.state.meme_backends = {"qq": qq, "discord": discord}
+        app.state.services.meme_backends = {"qq": qq, "discord": discord}
         app.include_router(router, prefix="/api/v1")
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"

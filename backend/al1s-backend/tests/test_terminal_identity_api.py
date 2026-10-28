@@ -12,12 +12,13 @@ def test_identity_only_returns_authenticated_subject_and_current_acceptance():
     terminal = SimpleNamespace(terminal_id=uuid4(), row_version=8,
                                acceptance_status=TerminalAcceptanceStatus.DRAINING)
     app = FastAPI()
+    app.state.services = SimpleNamespace()
     app.include_router(router)
     seen = []
     def authenticate(token):
         seen.append(token)
         return terminal
-    app.state.execution_resources = SimpleNamespace(authenticate_terminal=authenticate)
+    app.state.services.execution_resources = SimpleNamespace(authenticate_terminal=authenticate)
     response = TestClient(app).get("/terminal/identity", headers={"Authorization": "Bearer test-only"})
     assert response.json() == {"terminal_id": str(terminal.terminal_id), "row_version": 8,
                                "acceptance_status": "draining"}

@@ -199,10 +199,6 @@ class RenameStrategyRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
 
 
-class PublishStrategyRequest(StrategyDefinitionRequest):
-    expected_impact_hash: str | None = Field(default=None, pattern="^[0-9a-f]{64}$")
-
-
 class StrategyMutationResponse(BaseModel):
     strategy: StrategyResponse
     published_version: StrategyVersionSummaryResponse

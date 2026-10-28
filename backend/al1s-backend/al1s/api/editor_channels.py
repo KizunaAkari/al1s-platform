@@ -12,6 +12,7 @@ from websockets.asyncio.client import ClientConnection
 
 from al1s.api.android_editor_channels import serve_browser
 from al1s.app.admin_auth import COOKIE
+from al1s.app.service_state import service_state
 from al1s.execution.errors import ExecutionDomainError
 from al1s.infrastructure.editor_relay import DirectConnect, allowed_target
 
@@ -91,7 +92,9 @@ async def editor_channel(socket: WebSocket, session_id: UUID, channel: str) -> N
         await socket.close(code=1008)
         return
     try:
-        _, connection = await run_in_threadpool(socket.app.state.editor_sessions.detail, session_id)
+        _, connection = await run_in_threadpool(
+            service_state(socket).editor_sessions.detail, session_id
+        )
     except ExecutionDomainError:
         await socket.close(code=1008)
         return

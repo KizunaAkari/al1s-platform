@@ -23,11 +23,13 @@ def setup(monkeypatch):
                   for kind in relay.CHANNELS}
     connection['session_token'] = 'token'
     app = FastAPI()
+    app.state.services = SimpleNamespace()
     app.include_router(relay.router)
     app.state.settings = SimpleNamespace(cors_origin_list=['https://platform'])
+    app.state.services.settings = app.state.settings
     app.state.admin_sessions = AdminSessions('test-password-only')
     _, token = app.state.admin_sessions.login('test-password-only', 'test')
-    app.state.editor_sessions = SimpleNamespace(detail=lambda _: (None, connection))
+    app.state.services.editor_sessions = SimpleNamespace(detail=lambda _: (None, connection))
     headers = {'origin': 'https://platform', 'cookie': f'{COOKIE}={token}'}
     path = f'/editor-sessions/{uuid4()}/channels/video'
     return app, connection, headers, path

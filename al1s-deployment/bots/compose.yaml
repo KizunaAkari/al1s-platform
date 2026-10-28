@@ -27,6 +27,7 @@ services:
     environment:
       <<: *meme-runtime
       AL1S_MEME_ROLE: qq
+      AL1S_QUANT_DATABASE_URL: ${AL1S_QUANT_DATABASE_URL:-}
       TZ: Asia/Shanghai
       WEBUI_PORT: 3080
       AUTO_LOGIN_QQ: ${AUTO_LOGIN_QQ:-}

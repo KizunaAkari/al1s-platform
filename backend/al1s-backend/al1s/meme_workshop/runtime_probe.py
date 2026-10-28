@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 from io import BytesIO
 from pathlib import Path
 
@@ -35,6 +36,21 @@ def prove_runtime(manifest: Path, package: Path, role: str, *,
         default_device_name(bytes.fromhex("12" * 16), native)
     if identity.qq_device_name_override != (identity.qq_device_identity_v1 and native == "8.3.2"):
         raise ValueError("qq_identity_native_capability_invalid")
+    if identity.qq_quant_v1:
+        if "program:quant-backend" not in supervisor.read_text(encoding="utf-8"):
+            raise ValueError("qq_quant_supervisor_missing")
+        code = ("import importlib.metadata as m; from akquant import Engine; "
+                "assert m.version('akquant') == '0.3.71'; assert m.version('akshare') == '1.19.3'; "
+                "assert hasattr(Engine, 'apply_paper_entitlement'); "
+                "import sqlalchemy, psycopg, fastapi; "
+                "import al1s.quant.process, al1s.quant.socket_runtime, al1s.quant.trade, "
+                "al1s.quant.backtest_service, al1s.quant.corporate_service")
+        result = subprocess.run(["/opt/al1s-quant-venv/bin/python", "-c", code],
+                                capture_output=True, timeout=30, check=False,
+                                env={"PATH": "/usr/bin:/bin", "PYTHONPATH": "/opt/al1s",
+                                     "PYTHONDONTWRITEBYTECODE": "1"})
+        if result.returncode:
+            raise ValueError("qq_quant_dependency_proof_invalid")
     if OpenCC("t2s").convert("測試") != "测试":
         raise ValueError("bot_text_runtime_invalid")
     source = BytesIO()
@@ -62,6 +78,7 @@ def prove_runtime(manifest: Path, package: Path, role: str, *,
         "qq_client_version": identity.qq_client_version,
         "pmhq_version": identity.pmhq_version,
         "qq_headed_v1": identity.qq_headed_v1,
+        "qq_quant_v1": identity.qq_quant_v1,
     }
 
 

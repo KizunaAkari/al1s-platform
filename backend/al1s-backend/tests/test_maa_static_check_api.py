@@ -21,7 +21,7 @@ def test_check_uses_exact_candidate_and_projects_validation_issues():
         },
     )
     request = SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(maa_publication=service)),
+        app=SimpleNamespace(state=SimpleNamespace(services=SimpleNamespace(maa_publication=service))),
         state=SimpleNamespace(request_id=str(correlation_id)),
     )
     result = check_script_candidate(

@@ -103,6 +103,8 @@ class BotUpgradeDriver:
             raise ValueError("bot_candidate_identity_invalid")
         proof = probe_bot_image(self.deployment.runner, image["Id"])
         original = probe_bot_image(self.deployment.runner, before["Image"])
+        if alias == "qq" and original.qq_quant_v1 and not proof.qq_quant_v1:
+            raise ValueError("qq_quant_runtime_required")
         if (alias == "qq" and original.qq_protocol_mode == "pmhq" and (
                 proof.qq_protocol_mode != "pmhq" or not proof.qq_headed_v1
                     or proof.qq_client_version != original.qq_client_version

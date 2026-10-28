@@ -44,8 +44,13 @@ def compatible_release(
     reasons = []
     summary = current.qq_identity
     headed = getattr(current, "qq_protocol_mode", "direct") == "pmhq"
-    if release.component == "qq-bot" and headed and release.runtime_version != "2.0.0":
+    if release.component == "qq-bot" and headed and release.runtime_version not in {
+        "2.0.0", "2.0.1", "2.1.0"
+    }:
         reasons.append("qq_headed_runtime_required")
+    if (release.component == "qq-bot" and getattr(current, "qq_quant_v1", False)
+            and release.runtime_version != "2.1.0"):
+        reasons.append("qq_quant_runtime_required")
     if release.component == "qq-bot" and not headed and summary is not None:
         if summary.pending:
             reasons.append("qq_identity_pending_restart")

@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -45,6 +47,14 @@ def prepare_runtime(root: Path, client_link: Path) -> None:
 
 def main() -> None:
     os.environ.pop("LLBOT_DEV_NAME", None)
+    meme_token = os.environ.get("AL1S_MEME_BACKEND_TOKEN", "")
+    if meme_token and os.environ.get("AL1S_QUANT_DATABASE_URL"):
+        os.environ["AL1S_QUANT_CONTROL_TOKEN"] = hmac.new(
+            meme_token.encode(), b"al1s-quant-control-v1", hashlib.sha256).hexdigest()
+        master_key = os.environ.get("AL1S_MEME_MASTER_KEY", "")
+        if len(master_key.encode()) >= 32:
+            from al1s.quant.credential_key import derive_quant_credential_key
+            os.environ["AL1S_QUANT_CREDENTIAL_KEY"] = derive_quant_credential_key(master_key)
     try:
         from al1s.meme_workshop.runtime_identity import read_runtime_identity
         identity = read_runtime_identity()

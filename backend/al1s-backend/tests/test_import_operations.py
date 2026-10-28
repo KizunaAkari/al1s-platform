@@ -28,9 +28,9 @@ def test_async_submit_returns_persisted_identity_before_work_and_holds_slot():
             yield b"zip"
         request = SimpleNamespace(
             headers={"content-type": "application/zip"}, stream=stream,
-            app=SimpleNamespace(state=SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(services=SimpleNamespace(
                 maa_archive_upload_slots=slots, maa_archive_import_commands=service,
-            )),
+            ))),
         )
         background, response = BackgroundTasks(), Response()
         result = await submit(request, background, response)
@@ -53,9 +53,9 @@ def test_failed_prepare_releases_capacity():
             yield b"invalid"
         request = SimpleNamespace(
             headers={"content-type": "application/zip"}, stream=stream,
-            app=SimpleNamespace(state=SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(services=SimpleNamespace(
                 maa_archive_upload_slots=slots, maa_archive_import_commands=service,
-            )),
+            ))),
         )
         with pytest.raises(ValueError):
             await submit(request, BackgroundTasks(), Response())
