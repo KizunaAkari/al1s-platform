@@ -1,0 +1,7 @@
+ARG BASE_IMAGE=al1s-plachta:qq-capital-2.5.0
+FROM ${BASE_IMAGE}
+USER root
+COPY --from=backend al1s/quant/ /opt/al1s/al1s/quant/
+COPY --from=backend al1s/adapters/postgres/quant_instruments.py /opt/al1s/al1s/adapters/postgres/quant_instruments.py
+RUN python -c "import hashlib,json,pathlib; root=pathlib.Path('/opt/al1s/al1s'); p=pathlib.Path('/opt/al1s/runtime-manifest.json'); m=json.loads(p.read_text()); m['source_sha256']=hashlib.sha256(b''.join(f.read_bytes() for f in sorted(root.rglob('*.py')))).hexdigest(); p.write_text(json.dumps(m))"
+RUN python -m al1s.meme_workshop.runtime_probe

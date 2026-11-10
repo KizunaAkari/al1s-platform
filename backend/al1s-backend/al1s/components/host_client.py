@@ -30,6 +30,17 @@ class HostInventoryItem(Contract):
     qq_identity: QqIdentitySummary | None = None
     qq_protocol_mode: Literal["direct", "pmhq"] = "direct"
     qq_quant_v1: bool = False
+    qq_freqtrade_v1: bool = False
+    qq_freqtrade_futures_v1: bool = False
+    qq_freqtrade_visual_v1: bool = False
+    qq_freqtrade_capital_v1: bool = False
+    qq_command_replies_v1: bool = False
+    qq_ai_v1: bool = False
+    qq_ai_personas_v1: bool = False
+    qq_ai_network_routes_v1: bool = False
+    qq_ai_group_reply_v1: bool = False
+    qq_ai_smart_reply_v1: bool = False
+    qq_comfy_drawing_v1: bool = False
     qq_client_version: str | None = Field(default=None, max_length=64)
     pmhq_version: str | None = Field(default=None, max_length=64)
 
@@ -52,7 +63,7 @@ class ComponentHostClient:
             },
         )
         try:
-            with opener.open(request, timeout=15) as response:
+            with opener.open(request, timeout=25 if path == "/inventory" else 15) as response:
                 raw = response.read(128 * 1024 + 1)
             if len(raw) > 128 * 1024:
                 raise ValueError("component_host_response_limit")
@@ -60,8 +71,8 @@ class ComponentHostClient:
         except (OSError, ValueError):
             raise OSError("component_host_unavailable") from None
 
-    def inventory(self) -> list[NativeComponent]:
-        result = self.request("/inventory")
+    def inventory(self, *, include_bots: bool = True) -> list[NativeComponent]:
+        result = self.request("/inventory" if include_bots else "/inventory?include_bots=false")
         values = result.get("items") if isinstance(result, dict) else None
         if not isinstance(values, list) or len(values) > 8:
             raise ValueError("component_host_inventory_invalid")

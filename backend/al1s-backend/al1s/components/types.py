@@ -22,6 +22,17 @@ class NativeComponent:
     qq_identity: QqIdentitySummary | None = None
     qq_protocol_mode: Literal["direct", "pmhq"] = "direct"
     qq_quant_v1: bool = False
+    qq_freqtrade_v1: bool = False
+    qq_freqtrade_futures_v1: bool = False
+    qq_freqtrade_visual_v1: bool = False
+    qq_freqtrade_capital_v1: bool = False
+    qq_command_replies_v1: bool = False
+    qq_ai_v1: bool = False
+    qq_ai_personas_v1: bool = False
+    qq_ai_network_routes_v1: bool = False
+    qq_ai_group_reply_v1: bool = False
+    qq_ai_smart_reply_v1: bool = False
+    qq_comfy_drawing_v1: bool = False
     qq_client_version: str | None = None
     pmhq_version: str | None = None
 

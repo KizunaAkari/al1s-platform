@@ -10,6 +10,7 @@ import structlog
 
 from al1s.adapters.postgres.meme_settings import QqConnection
 from al1s.adapters.postgres.quant_replies import QuantReplies
+from al1s.meme_workshop.contracts import RenderedImage
 from al1s.meme_workshop.onebot import OneBotClient
 from al1s.quant.commands import QuantCommand
 from al1s.quant.process_client import QuantProcessClient
@@ -50,8 +51,15 @@ class QuantQqDispatcher:
             return False
         status = "unknown"
         try:
-            await asyncio.to_thread(clients[reply.service_id].send, reply.source, reply.content)
-            status = "sent"
+            if await asyncio.to_thread(self.replies.can_send, reply):
+                options = {}
+                if reply.image is not None:
+                    options["image"] = RenderedImage(reply.image, "image/png", 0, 0)
+                if reply.mention_id is not None or not reply.quote_message:
+                    options.update(mention_id=reply.mention_id, quote=reply.quote_message)
+                await asyncio.to_thread(clients[reply.service_id].send, reply.source,
+                                        reply.content, **options)
+                status = "sent"
         except asyncio.CancelledError:
             raise
         except Exception as exc:

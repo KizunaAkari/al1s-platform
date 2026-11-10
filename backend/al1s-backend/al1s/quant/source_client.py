@@ -110,14 +110,15 @@ class MarketSource:
             }
         )
         try:
-            if not self._slots.acquire(timeout=3):
+            batch_names = request["kind"] == "name" and "symbols" in request
+            if not self._slots.acquire(timeout=1 if batch_names else 3):
                 raise ValueError("quant_source_busy")
             try:
                 result = self._run(
                     [sys.executable, "-m", "al1s.quant.source_worker"],
                     input=json.dumps(request).encode(),
                     capture_output=True,
-                    timeout=20,
+                    timeout=(6 if batch_names else 4) if request["kind"] == "name" else 20,
                     env=env,
                     check=False,
                 )
@@ -141,6 +142,35 @@ class MarketSource:
         if not rows and (request["kind"].startswith(("minute", "daily"))):
             raise ValueError("quant_source_empty")
         return rows
+
+    def security_name(self, market: str, code: str) -> str | None:
+        try:
+            rows = self._rows({"kind":"name", "market":market, "code":code})
+        except ValueError:
+            return None
+        name = rows[0].get("name") if len(rows) == 1 else None
+        return (name.strip() if isinstance(name, str) and 0 < len(name.strip()) <= 64
+                and name.isprintable() else None)
+
+    def security_names(self, symbols: list[tuple[str, str]]) -> dict[tuple[str, str], str]:
+        unique = list(dict.fromkeys(symbols))
+        if not unique:
+            return {}
+        try:
+            rows = self._rows({"kind": "name", "symbols": [
+                {"market": market.lower(), "code": code} for market, code in unique
+            ]})
+        except ValueError:
+            return {}
+        allowed = {(market.lower(), code) for market, code in unique}
+        result = {}
+        for row in rows:
+            key = (row.get("market"), row.get("code"))
+            name = row.get("name")
+            if (key in allowed and isinstance(name, str) and name.isprintable()
+                    and 0 < len(name.strip()) <= 64 and name.strip() != key[1]):
+                result[(key[0].upper(), key[1])] = name.strip()
+        return result
 
     @staticmethod
     def _bar(row: dict[str, str], *, daily: bool) -> MarketBar:

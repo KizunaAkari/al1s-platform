@@ -115,3 +115,15 @@ def test_image_replies_use_the_original_group_or_private_scope_without_extra_tex
     assert group.args[2]["group_id"] == 300 and private.args[2]["user_id"] == 200
     assert group.args[2]["message"][-1]["data"]["file"].startswith("base64://")
     assert all(part["type"] != "text" for part in group.args[2]["message"])
+
+
+def test_notice_mentions_owner_without_quoting_synthetic_id(monkeypatch):
+    post = MagicMock(return_value={"message_id": 1})
+    client = OneBotClient("http://gateway:3000", None)
+    monkeypatch.setattr(client, "post", post)
+    source = CommandSource(message_id="ft-exit-synthetic", scope_kind="qq_group",
+                           target_id="300", sender_id="200")
+    client.send(source, "模拟强平", mention_id="200", quote=False)
+    segments = post.call_args.args[1]["message"]
+    assert segments[0] == {"type": "at", "data": {"qq": "200"}}
+    assert all(part["type"] != "reply" for part in segments)

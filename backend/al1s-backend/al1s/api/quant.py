@@ -52,7 +52,7 @@ def get_status(request: Request) -> dict:
 class QuantSettingsWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
     settings: QuantSettings
-    commands: dict[str, str]
+    commands: dict[str, str] | None = None
 
 
 def _view(

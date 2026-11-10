@@ -70,3 +70,29 @@ def test_increased_global_interval_takes_effect_before_next_reply(queue):
         session.get(QuantSettingsRow, service).reply_interval_seconds = 10
     assert replies.claim_next(now + timedelta(seconds=5)) is None
     assert replies.claim_next(now + timedelta(seconds=10)) is not None
+
+
+def test_png_outbox_deduplicates_and_releases_bytes_after_unknown_send(queue):
+    replies, service = queue
+    first, created = replies.enqueue(service, command("chart-1", "1"), "BTC行情", 2,
+                                     image=b"\x89PNG\r\n\x1a\nexample")
+    replay, again = replies.enqueue(service, command("chart-1", "1"), "BTC行情", 2,
+                                    image=b"\x89PNG\r\n\x1a\nchanged")
+    assert created and not again and replay.id == first.id
+    now = datetime.now(UTC)
+    sent = replies.claim_next(now)
+    assert sent.image == first.image and sent.expires_at is not None
+    replies.settle(sent.id, "unknown", now)
+    with replies.sessions() as session:
+        assert session.get(QuantReplyRow, sent.id).image is None
+    assert replies.claim_next(now + timedelta(seconds=3)) is None
+
+
+def test_expired_chart_is_not_claimed_and_drops_png(queue):
+    replies, service = queue
+    item, _ = replies.enqueue(service, command("chart-2", "1"), "BTC行情", 2,
+                              image=b"\x89PNG\r\n\x1a\nexample")
+    assert replies.claim_next(datetime.now(UTC) + timedelta(minutes=16)) is None
+    with replies.sessions() as session:
+        row = session.get(QuantReplyRow, item.id)
+        assert row.status == "unknown" and row.image is None

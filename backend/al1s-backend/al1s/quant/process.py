@@ -17,7 +17,7 @@ from al1s.quant.corporate_service import CorporateService
 from al1s.quant.execution import PaperExecution
 from al1s.quant.gateway import QuantGateway
 from al1s.quant.health import QuantHealth
-from al1s.quant.messages import QuantCommandRequest
+from al1s.quant.messages import QuantAdminCommandRequest, QuantAdminReadRequest, QuantCommandRequest, QuantReadRequest
 from al1s.quant.retention import QuantRetention
 
 DOMAIN_MESSAGES = {
@@ -52,6 +52,7 @@ def create_process_app(
     control_token: str,
     *,
     command_handler: Callable[[UUID, QuantCommand], str] | None = None,
+    read_handler: Callable | None = None,
     executor: PaperExecution | None = None,
     backtests: QuantBacktests | None = None,
     corporate: CorporateService | None = None,
@@ -169,5 +170,36 @@ def create_process_app(
         if not isinstance(content, str) or not 1 <= len(content) <= 4096:
             raise HTTPException(503, "quant_command_result_invalid")
         return {"content": content}
+
+    @app.post("/internal/query/{service_id}")
+    def query_for_ai(service_id: UUID, data: QuantReadRequest) -> dict:
+        settings = gateway.read_settings(service_id, data.source)
+        if settings is None:
+            raise HTTPException(403, "quant_read_denied")
+        if read_handler is None:
+            raise HTTPException(503, "quant_read_unavailable")
+        return read_handler(data.source, settings, data.kind, data.page, service_id)
+
+    @app.post("/internal/admin/command/{service_id}")
+    def execute_admin(service_id: UUID, data: QuantAdminCommandRequest) -> dict[str, str]:
+        row, mapping = gateway.applied_versions(service_id)
+        if command_handler is None or row < data.settings_version or mapping < data.mapping_version:
+            raise HTTPException(503, "quant_command_unavailable")
+        try:
+            content = command_handler(service_id, data.command())
+        except ValueError as error:
+            content = DOMAIN_MESSAGES.get(str(error), "量化请求未完成，请检查输入或稍后查询。")
+        if not isinstance(content, str) or not 1 <= len(content) <= 4096:
+            raise HTTPException(503, "quant_command_result_invalid")
+        return {"content": content}
+
+    @app.post("/internal/admin/query/{service_id}")
+    def query_admin(service_id: UUID, data: QuantAdminReadRequest) -> dict:
+        settings = gateway.read_admin_settings(service_id)
+        if settings is None:
+            raise HTTPException(403, "quant_read_denied")
+        if read_handler is None:
+            raise HTTPException(503, "quant_read_unavailable")
+        return read_handler(data.source, settings, data.kind, data.page, service_id)
 
     return app

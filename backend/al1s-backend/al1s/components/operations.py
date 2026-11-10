@@ -45,12 +45,46 @@ def compatible_release(
     summary = current.qq_identity
     headed = getattr(current, "qq_protocol_mode", "direct") == "pmhq"
     if release.component == "qq-bot" and headed and release.runtime_version not in {
-        "2.0.0", "2.0.1", "2.1.0"
+        "2.0.0", "2.0.1", "2.1.0", '2.2.0', '2.3.0', '2.4.0', '2.5.0', '2.6.0',
+        '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'
     }:
         reasons.append("qq_headed_runtime_required")
     if (release.component == "qq-bot" and getattr(current, "qq_quant_v1", False)
-            and release.runtime_version != "2.1.0"):
+            and release.runtime_version not in {'2.1.0', '2.2.0', '2.3.0', '2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'}):
         reasons.append("qq_quant_runtime_required")
+    if (release.component == 'qq-bot' and getattr(current, 'qq_freqtrade_v1', False)
+            and release.runtime_version not in {'2.2.0', '2.3.0', '2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'}):
+        reasons.append('qq_freqtrade_runtime_required')
+    if (release.component == 'qq-bot' and getattr(current, 'qq_freqtrade_futures_v1', False)
+            and release.runtime_version not in {'2.3.0', '2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'}):
+        reasons.append('qq_freqtrade_futures_runtime_required')
+    if (release.component == 'qq-bot' and getattr(current, 'qq_freqtrade_visual_v1', False)
+            and release.runtime_version not in {'2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'}):
+        reasons.append('qq_freqtrade_visual_runtime_required')
+    if (release.component == 'qq-bot' and getattr(current, 'qq_freqtrade_capital_v1', False)
+            and release.runtime_version not in {'2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'}):
+        reasons.append('qq_freqtrade_capital_runtime_required')
+    if (release.component == 'qq-bot' and getattr(current, 'qq_command_replies_v1', False)
+            and release.runtime_version not in {'2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'}):
+        reasons.append('qq_command_replies_runtime_required')
+    if (release.component == 'qq-bot' and getattr(current, 'qq_ai_v1', False)
+            and release.runtime_version not in {'2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'}):
+        reasons.append('qq_ai_runtime_required')
+    if (release.component == 'qq-bot' and getattr(current, 'qq_ai_personas_v1', False)
+            and release.runtime_version not in {'2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'}):
+        reasons.append('qq_ai_personas_runtime_required')
+    if (release.component == 'qq-bot' and getattr(current, 'qq_ai_network_routes_v1', False)
+            and release.runtime_version not in {'2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'}):
+        reasons.append('qq_ai_network_routes_runtime_required')
+    if (release.component == 'qq-bot' and getattr(current, 'qq_ai_group_reply_v1', False)
+            and release.runtime_version not in {'2.10.0', '2.11.0', '2.12.0', '2.13.0'}):
+        reasons.append('qq_ai_group_reply_runtime_required')
+    if (release.component == 'qq-bot' and getattr(current, 'qq_ai_smart_reply_v1', False)
+            and release.runtime_version not in {'2.11.0', '2.12.0', '2.13.0'}):
+        reasons.append('qq_ai_smart_reply_runtime_required')
+    if (release.component == 'qq-bot' and getattr(current, 'qq_comfy_drawing_v1', False)
+            and release.runtime_version != '2.13.0'):
+        reasons.append('qq_comfy_drawing_runtime_required')
     if release.component == "qq-bot" and not headed and summary is not None:
         if summary.pending:
             reasons.append("qq_identity_pending_restart")

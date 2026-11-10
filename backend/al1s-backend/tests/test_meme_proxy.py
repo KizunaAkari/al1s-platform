@@ -100,3 +100,27 @@ def test_quant_proxy_uses_admin_auth_csrf_and_only_qq_backend() -> None:
 
 def test_platform_authenticates_and_forwards_without_running_image_generation() -> None:
     asyncio.run(proxy_case())
+
+
+def test_drawing_proxy_requires_admin_and_csrf_and_only_targets_qq():
+    async def run():
+        app = FastAPI()
+        settings = Settings(_env_file=None, admin_password=SecretStr("drawing-proxy-test-password"))
+        app.state.settings = settings
+        qq, discord = MagicMock(), MagicMock()
+        qq.forward.return_value = BackendResponse(200, b"{}", "application/json")
+        app.state.services = SimpleNamespace(settings=settings, meme_backends={"qq": qq, "discord": discord})
+        app.include_router(router, prefix="/api/v1")
+        install_admin_auth(app, settings)
+        path = "/api/v1/bots/ai/drawing/00000000-0000-0000-0000-000000000001/settings"
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://test") as client:
+            assert (await client.get(path)).status_code == 401
+            await client.post("/api/v1/auth/login", json={"password": "drawing-proxy-test-password"},
+                              headers={"X-AL1S-CSRF": "1"})
+            assert (await client.put(path, content=b"{}")).status_code == 403
+            assert (await client.put(path, content=b"{}", headers={"X-AL1S-CSRF": "1"})).status_code == 200
+            assert qq.forward.call_args.args[1] == path
+            assert (await client.get(path.replace("settings", "private"))).status_code == 404
+            assert (await client.get(path + "?untrusted=x")).status_code == 400
+            discord.forward.assert_not_called()
+    asyncio.run(run())

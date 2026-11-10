@@ -72,8 +72,9 @@ def test_inventory_is_batched_and_distinguishes_maa_agent_and_offline_observatio
     class Host:
         calls = 0
 
-        def inventory(self):
+        def inventory(self, include_bots=True):
             self.calls += 1
+            assert include_bots is False
             return [
                 NativeComponent(
                     "postgresql",
@@ -104,12 +105,85 @@ def test_host_failure_does_not_hide_terminal_inventory():
             return [], None
 
     class Host:
-        def inventory(self):
+        def inventory(self, include_bots=True):
             raise OSError("private-token")
 
     page = ComponentInventoryService(Profiles(), Host()).list()
     assert len(page.items) == 4 and all(row.status == "unknown" for row in page.items)
     assert "private-token" not in page.model_dump_json()
+
+
+def test_bot_lookup_retains_full_inventory():
+    class Host:
+        def inventory(self, include_bots=True):
+            assert include_bots is True
+            return [NativeComponent("qq-bot", "8.3.2", "amd64", "healthy", None)]
+
+    row = ComponentInventoryService(None, Host()).get(
+        ComponentTarget(kind="bot", bot_alias="qq"), "qq-bot"
+    )
+    assert row is not None and row.version == "8.3.2"
+
+
+def test_host_client_requests_platform_only_inventory_when_requested(monkeypatch):
+    from al1s.components.host_client import ComponentHostClient
+
+    paths = []
+    client = ComponentHostClient(None)
+    monkeypatch.setattr(client, "request", lambda path: paths.append(path) or {"items": []})
+    client.inventory()
+    client.inventory(include_bots=False)
+    assert paths == ["/inventory", "/inventory?include_bots=false"]
+
+
+def test_full_bot_inventory_has_time_for_capability_probes(monkeypatch):
+    from types import SimpleNamespace
+    from pydantic import SecretStr
+    import al1s.components.host_client as module
+
+    timeouts = []
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *_args): pass
+        def read(self, _limit): return b'{"items": []}'
+
+    class Opener:
+        def open(self, _request, *, timeout):
+            timeouts.append(timeout)
+            return Response()
+
+    monkeypatch.setattr(module, "build_opener", lambda *_args: Opener())
+    connection = SimpleNamespace(url="https://example.test", ca_file=None, token=SecretStr("test"))
+    client = module.ComponentHostClient(connection)
+    client.inventory()
+    client.inventory(include_bots=False)
+    client.request("/health")
+    assert timeouts == [25, 15, 15]
+
+
+def test_host_inventory_preserves_bot_capabilities_through_platform_projection(monkeypatch):
+    from al1s.components.host_client import ComponentHostClient
+    from al1s.components.inventory import native_entry
+
+    capabilities = {name: True for name in (
+        'qq_quant_v1', 'qq_freqtrade_v1', 'qq_freqtrade_futures_v1', 'qq_freqtrade_visual_v1',
+        'qq_freqtrade_capital_v1', 'qq_command_replies_v1', 'qq_ai_v1', 'qq_ai_personas_v1',
+        'qq_ai_network_routes_v1', 'qq_ai_group_reply_v1', 'qq_ai_smart_reply_v1')}
+    common = {'version': '8.3.2', 'architecture': 'amd64', 'status': 'healthy', 'observed_at': None,
+              'runtime_version': '2.12.0', 'qq_protocol_mode': 'pmhq',
+              'qq_client_version': '3.2.34',
+              'pmhq_version': '9.0.6'}
+    qq = {**common, **capabilities, 'component': 'qq-bot'}
+    discord = {**common, **{name: False for name in capabilities}, 'component': 'discord-bot',
+               'qq_protocol_mode': 'direct'}
+    client = ComponentHostClient(None)
+    monkeypatch.setattr(client, 'request', lambda _path: {'items': [qq, discord]})
+    rows = client.inventory()
+    assert [row.component for row in rows] == ['qq-bot', 'discord-bot']
+    projected = native_entry(rows[0])
+    assert all(getattr(projected, name) is True for name in capabilities)
+    assert native_entry(rows[1]).qq_ai_smart_reply_v1 is False
 
 
 def test_online_agent_does_not_imply_maa_execution_is_healthy():

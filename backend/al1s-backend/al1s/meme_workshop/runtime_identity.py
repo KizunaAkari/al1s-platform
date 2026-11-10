@@ -21,9 +21,42 @@ class RuntimeIdentity(BaseModel):
     pmhq_version: str | None = Field(default=None, min_length=1, max_length=64)
     qq_headed_v1: bool = False
     qq_quant_v1: bool = False
+    qq_freqtrade_v1: bool = False
+    qq_freqtrade_futures_v1: bool = False
+    qq_freqtrade_visual_v1: bool = False
+    qq_freqtrade_capital_v1: bool = False
+    qq_command_replies_v1: bool = False
+    qq_ai_v1: bool = False
+    qq_ai_personas_v1: bool = False
+    qq_ai_network_routes_v1: bool = False
+    qq_ai_group_reply_v1: bool = False
+    qq_ai_smart_reply_v1: bool = False
+    qq_comfy_drawing_v1: bool = False
 
     @model_validator(mode="after")
     def headed_contract(self) -> "RuntimeIdentity":
+        if self.qq_comfy_drawing_v1 and self.role != "qq":
+            raise ValueError("qq_comfy_drawing_manifest_invalid")
+        if self.qq_ai_smart_reply_v1 and not self.qq_ai_group_reply_v1:
+            raise ValueError("qq_ai_smart_reply_manifest_invalid")
+        if self.qq_ai_group_reply_v1 and not self.qq_ai_network_routes_v1:
+            raise ValueError("qq_ai_group_reply_manifest_invalid")
+        if self.qq_ai_network_routes_v1 and not self.qq_ai_personas_v1:
+            raise ValueError("qq_ai_network_routes_manifest_invalid")
+        if self.qq_ai_personas_v1 and not self.qq_ai_v1:
+            raise ValueError("qq_ai_personas_manifest_invalid")
+        if self.qq_ai_v1 and (self.role != "qq" or not self.qq_command_replies_v1):
+            raise ValueError("qq_ai_manifest_invalid")
+        if self.qq_freqtrade_futures_v1 and not self.qq_freqtrade_v1:
+            raise ValueError('qq_freqtrade_futures_manifest_invalid')
+        if self.qq_freqtrade_visual_v1 and not self.qq_freqtrade_futures_v1:
+            raise ValueError('qq_freqtrade_visual_manifest_invalid')
+        if self.qq_command_replies_v1 and not self.qq_freqtrade_capital_v1:
+            raise ValueError("qq_command_replies_manifest_invalid")
+        if self.qq_freqtrade_capital_v1 and not self.qq_freqtrade_visual_v1:
+            raise ValueError('qq_freqtrade_capital_manifest_invalid')
+        if self.qq_freqtrade_v1 and not self.qq_quant_v1:
+            raise ValueError('qq_freqtrade_manifest_invalid')
         if self.qq_quant_v1 and (self.role != "qq" or self.qq_protocol_mode != "pmhq"):
             raise ValueError("qq_quant_manifest_invalid")
         if self.qq_protocol_mode == "pmhq" and (

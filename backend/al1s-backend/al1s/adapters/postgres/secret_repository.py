@@ -6,6 +6,8 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from al1s.adapters.postgres.bot_models import BotConfigVersionRow
+from al1s.adapters.postgres.bot_ai_models import BotAiChatProfileRow, BotAiProviderRow
+from al1s.adapters.postgres.bot_drawing_models import BotDrawingPromptRevisionRow, BotDrawingRevisionRow, BotDrawingSettingsRow
 from al1s.adapters.postgres.notification_models import EncryptedSecretRow, NotificationChannelRow
 from al1s.secrets.types import SecretRecord
 
@@ -61,11 +63,37 @@ class PostgresSecretRepository:
             .where(BotConfigVersionRow.secret_id == EncryptedSecretRow.id)
             .exists()
         )
+        ai_reference = (
+            select(BotAiProviderRow.service_id)
+            .where(BotAiProviderRow.secret_id == EncryptedSecretRow.id)
+            .exists()
+        )
+        chat_profile_reference = (
+            select(BotAiChatProfileRow.id)
+            .where(BotAiChatProfileRow.secret_id == EncryptedSecretRow.id)
+            .exists()
+        )
+        drawing_reference = (
+            select(BotDrawingSettingsRow.service_id)
+            .where(BotDrawingSettingsRow.resource_secret_id == EncryptedSecretRow.id)
+            .exists()
+        )
+        drawing_prompt_reference = (
+            select(BotDrawingPromptRevisionRow.service_id)
+            .where(BotDrawingPromptRevisionRow.secret_id == EncryptedSecretRow.id)
+            .exists()
+        )
+        drawing_online_reference = (
+            select(BotDrawingRevisionRow.service_id)
+            .where(BotDrawingRevisionRow.online_secret_id == EncryptedSecretRow.id)
+            .exists()
+        )
         deleted_ids = self._session.scalars(
             delete(EncryptedSecretRow)
             .where(
                 EncryptedSecretRow.id.in_(secret_ids),
-                ~or_(notification_reference, bot_reference),
+                ~or_(notification_reference, bot_reference, ai_reference, chat_profile_reference,
+                     drawing_reference, drawing_prompt_reference, drawing_online_reference),
             )
             .returning(EncryptedSecretRow.id)
         ).all()

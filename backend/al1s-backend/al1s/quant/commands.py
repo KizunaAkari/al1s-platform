@@ -1,7 +1,7 @@
 import re
 import unicodedata
 from collections.abc import Mapping, Set
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from al1s.meme_workshop.contracts import CommandSource
 from al1s.meme_workshop.onebot import identity
@@ -30,6 +30,7 @@ class QuantCommand:
     settings_version: int = 0
     settings: QuantSettings | None = None
     command_words: tuple[tuple[str, str], ...] = ()
+    reply_templates: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 def normalize_keyword(value: str) -> str:
@@ -57,7 +58,8 @@ def validate_mappings(mapping: Mapping[str, str], meme_words: Set[str]) -> dict[
 
 
 def parse_quant_event(
-    event: object, mapping: Mapping[str, str], meme_words: Set[str], version: int
+    event: object, mapping: Mapping[str, str], meme_words: Set[str], version: int,
+    *, allowed_actions: Set[str] | None = None,
 ) -> QuantCommand | None:
     if not isinstance(event, dict) or event.get("post_type") != "message":
         return None
@@ -107,7 +109,7 @@ def parse_quant_event(
     if keyword in {normalize_keyword(word) for word in meme_words}:
         return None
     matching = [action for action, word in normalized.items() if word == keyword]
-    if len(matching) != 1 or matching[0] not in DEFAULT_COMMANDS:
+    if len(matching) != 1 or matching[0] not in (allowed_actions if allowed_actions is not None else DEFAULT_COMMANDS):
         return None
     return QuantCommand(
         CommandSource(

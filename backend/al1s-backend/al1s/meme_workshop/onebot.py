@@ -191,16 +191,26 @@ class OneBotClient:
     def reply_images(self, message_id: str) -> list[str]:
         return image_urls(self.post("get_msg", {"message_id": int(message_id)}).get("message"))
 
-    def send(self, source: CommandSource, result: RenderedImage | str) -> None:
-        segments: list[dict[str, object]] = [{"type": "reply", "data": {"id": source.message_id}}]
+    def send(self, source: CommandSource, result: RenderedImage | str, *,
+             image: RenderedImage | None = None, mention_id: str | None = None,
+             quote: bool = True) -> str:
+        segments: list[dict[str, object]] = (
+            [{"type": "reply", "data": {"id": source.message_id}}] if quote else []
+        )
+        if mention_id is not None and source.scope_kind == "qq_group":
+            if identity(mention_id) != source.sender_id:
+                raise ValueError("onebot_mention_invalid")
+            segments.append({"type": "at", "data": {"qq": mention_id}})
         if isinstance(result, str):
             segments.append({"type": "text", "data": {"text": result}})
         else:
+            image = result
+        if image is not None:
             segments.append(
                 {
                     "type": "image",
                     "data": {
-                        "file": "base64://" + base64.b64encode(result.body).decode("ascii"),
+                        "file": "base64://" + base64.b64encode(image.body).decode("ascii"),
                     },
                 }
             )
@@ -216,3 +226,35 @@ class OneBotClient:
             data.get("message_id"), (int, str)
         ):
             raise ValueError("onebot_receipt_unknown")
+        return str(data["message_id"])
+
+    def send_segments(self, source: CommandSource, parts: list[dict[str, object]], *,
+                      quote: bool = True) -> str:
+        segments: list[dict[str, object]] = (
+            [{"type": "reply", "data": {"id": source.message_id}}] if quote else []
+        )
+        if not 1 <= len(parts) <= 8:
+            raise ValueError("onebot_segments_invalid")
+        for part in parts:
+            kind = part.get("type")
+            if kind == "text" and isinstance(part.get("text"), str):
+                value = part["text"]
+                if not value or len(value) > 3000:
+                    raise ValueError("onebot_text_invalid")
+                segments.append({"type": "text", "data": {"text": value}})
+            elif kind in {"image", "record"} and isinstance(part.get("body"), bytes):
+                body = part["body"]
+                if not body or len(body) > 8 * 1024 * 1024:
+                    raise ValueError("onebot_media_invalid")
+                segments.append({"type": kind, "data": {
+                    "file": "base64://" + base64.b64encode(body).decode("ascii")}})
+            else:
+                raise ValueError("onebot_segments_invalid")
+        group = source.scope_kind == "qq_group"
+        data = self.post("send_group_msg" if group else "send_private_msg", {
+            "group_id" if group else "user_id": int(source.target_id), "message": segments,
+        })
+        message_id = data.get("message_id")
+        if isinstance(message_id, bool) or not isinstance(message_id, (int, str)):
+            raise ValueError("onebot_receipt_unknown")
+        return str(message_id)

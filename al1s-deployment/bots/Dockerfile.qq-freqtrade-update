@@ -1,0 +1,19 @@
+ARG QQ_BASE=al1s-plachta:quant-help-20261028
+FROM ${QQ_BASE}
+USER root
+# Frozen, tested Python 3.12 environment; versions are recorded in the adjacent lock file.
+COPY --from=freqtrade-env freqtrade-venv.tar.gz /tmp/freqtrade-venv.tar.gz
+RUN tar -C /opt -xzf /tmp/freqtrade-venv.tar.gz && rm /tmp/freqtrade-venv.tar.gz
+COPY requirements.freqtrade.lock /opt/al1s/requirements.freqtrade.lock
+RUN /opt/al1s-freqtrade-venv/bin/pip check \
+ && useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin al1s-freqtrade \
+ && install -d -m 0700 -o al1s-freqtrade -g al1s-freqtrade /run/al1s-freqtrade /var/lib/al1s-freqtrade
+COPY --from=backend al1s/freqtrade/ /opt/al1s/al1s/freqtrade/
+COPY --from=backend al1s/api/freqtrade.py /opt/al1s/al1s/api/freqtrade.py
+COPY --from=backend al1s/adapters/postgres/freqtrade_models.py al1s/adapters/postgres/freqtrade_repository.py al1s/adapters/postgres/quant_settings.py al1s/adapters/postgres/quant_replies.py /opt/al1s/al1s/adapters/postgres/
+COPY --from=backend al1s/meme_workshop/runtime.py al1s/meme_workshop/runtime_main.py al1s/meme_workshop/qq_worker.py al1s/meme_workshop/runtime_identity.py al1s/meme_workshop/runtime_probe.py /opt/al1s/al1s/meme_workshop/
+COPY --from=backend al1s/components/contracts.py al1s/components/operations.py /opt/al1s/al1s/components/
+COPY qq-headed-supervisord.conf /etc/al1s-qq-supervisord.conf
+RUN python -c "import hashlib,json,pathlib; root=pathlib.Path('/opt/al1s/al1s'); p=pathlib.Path('/opt/al1s/runtime-manifest.json'); m=json.loads(p.read_text()); m.update(runtime_version='2.2.0',qq_freqtrade_v1=True,source_sha256=hashlib.sha256(b''.join(f.read_bytes() for f in sorted(root.rglob('*.py')))).hexdigest()); m['requirements_sha256']=hashlib.sha256(pathlib.Path('/tmp/requirements.lock').read_bytes()+pathlib.Path('/tmp/requirements.quant.lock').read_bytes()+pathlib.Path('/opt/al1s/requirements.freqtrade.lock').read_bytes()).hexdigest(); p.write_text(json.dumps(m))"
+LABEL org.al1s.runtime-version=2.2.0 org.al1s.qq-freqtrade=1
+RUN python -m al1s.meme_workshop.runtime_probe

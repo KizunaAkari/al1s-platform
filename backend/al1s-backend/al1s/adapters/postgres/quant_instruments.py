@@ -1,11 +1,11 @@
 """Stable security identities after an external source confirms the symbol."""
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import and_, case, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -19,6 +19,7 @@ class Instrument:
     market: str
     current_code: str
     board: str
+    name: str | None = None
 
 
 def infer_market(code: str) -> str:
@@ -75,4 +76,36 @@ class QuantInstruments:
             )
             if row is None or not row.active or row.board != board:
                 raise ValueError("quant_instrument_unavailable")
-            return Instrument(row.id, row.market, row.current_code, row.board)
+            return Instrument(row.id, row.market, row.current_code, row.board, row.name)
+
+    def set_name(self, instrument: Instrument, name: str) -> Instrument:
+        if (not isinstance(name, str) or not name.strip()
+            or len(name) > 64 or not name.isprintable()):
+            raise ValueError("quant_instrument_name_invalid")
+        name = name.strip()
+        with self.sessions.begin() as session:
+            session.execute(update(QuantInstrumentRow).where(QuantInstrumentRow.id == instrument.id)
+                            .values(name=name))
+        return replace(instrument, name=name)
+
+    def cache_names(self, names: dict[tuple[str, str], str]) -> None:
+        if not names:
+            return
+        if len(names) > 25:
+            raise ValueError("quant_instrument_name_invalid")
+        choices = []
+        for (market, code), name in names.items():
+            if (market not in {"SH", "SZ", "BJ"} or infer_market(code) != market
+                    or not isinstance(name, str) or not name.strip() or name.strip() == code
+                    or len(name.strip()) > 64 or not name.isprintable()):
+                raise ValueError("quant_instrument_name_invalid")
+            condition = and_(
+                QuantInstrumentRow.market == market, QuantInstrumentRow.current_code == code
+            )
+            choices.append((condition, name.strip()))
+        with self.sessions.begin() as session:
+            session.execute(update(QuantInstrumentRow).where(
+                or_(*(condition for condition, _ in choices)),
+                or_(QuantInstrumentRow.name == QuantInstrumentRow.current_code,
+                    QuantInstrumentRow.name == "", QuantInstrumentRow.name.is_(None)),
+            ).values(name=case(*choices, else_=QuantInstrumentRow.name)))

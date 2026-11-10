@@ -1,6 +1,8 @@
+import gzip
 import hashlib
 import json
 import os
+import tarfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -8,7 +10,7 @@ from al1s.components.host.compose_driver import ComposeDeployment
 from al1s.components.host.contracts import JsonObject
 
 ARCHIVE_PROGRAM = (
-    "import tarfile; t=tarfile.open('/backup/data.tar','w');"
+    "import tarfile; t=tarfile.open('/backup/data.tar.gz','w:gz',compresslevel=1);"
     "t.add('/source',arcname='data');t.close()"
 )
 
@@ -35,6 +37,20 @@ def checksum(path: Path) -> str:
         while body := stream.read(1024**2):
             digest.update(body)
     return digest.hexdigest()
+
+
+def validate_gzip_archive(path: Path) -> None:
+    with gzip.open(path, "rb") as source:
+        with tarfile.open(fileobj=source, mode="r|") as archive:
+            for member in archive:
+                if member.isfile():
+                    content = archive.extractfile(member)
+                    if content is None:
+                        raise ValueError("backup_archive_invalid")
+                    while content.read(1024**2):
+                        pass
+        while source.read(1024**2):
+            pass
 
 
 def backup_data(
@@ -80,29 +96,34 @@ def backup_data(
         for index, (kind, source) in enumerate(sources):
             target = directory / f"data-{index}"
             target.mkdir(mode=0o700)
-            deployment.runner.run(
-                [
-                    "docker",
-                    "run",
-                    "--rm",
-                    "--network",
-                    "none",
-                    "--read-only",
-                    "--user",
-                    "0:0",
-                    "--mount",
-                    f"type={kind},source={source},target=/source,readonly",
-                    "--mount",
-                    f"type=bind,source={target},target=/backup",
-                    "--entrypoint",
-                    "python",
-                    utility_image,
-                    "-c",
-                    ARCHIVE_PROGRAM,
-                ],
-                600,
-            )
-            archive = target / "data.tar"
-            result[f"data-{index}/data.tar"] = checksum(archive)
+            archive = target / "data.tar.gz"
+            try:
+                deployment.runner.run(
+                    [
+                        "docker",
+                        "run",
+                        "--rm",
+                        "--network",
+                        "none",
+                        "--read-only",
+                        "--user",
+                        "0:0",
+                        "--mount",
+                        f"type={kind},source={source},target=/source,readonly",
+                        "--mount",
+                        f"type=bind,source={target},target=/backup",
+                        "--entrypoint",
+                        "python",
+                        utility_image,
+                        "-c",
+                        ARCHIVE_PROGRAM,
+                    ],
+                    600,
+                )
+                validate_gzip_archive(archive)
+                result[f"data-{index}/data.tar.gz"] = checksum(archive)
+            except Exception:
+                archive.unlink(missing_ok=True)
+                raise
     private_json(directory / "backups.json", result)
     return result

@@ -1,0 +1,8 @@
+ARG BASE_IMAGE=al1s-platform:quant-help-20261028
+FROM ${BASE_IMAGE}
+COPY --from=backend --chown=al1s:al1s al1s/api/meme_proxy.py /app/al1s/api/meme_proxy.py
+COPY --from=backend --chown=al1s:al1s al1s/components/contracts.py al1s/components/operations.py /app/al1s/components/
+COPY --from=backend --chown=al1s:al1s al1s/adapters/postgres/freqtrade_models.py /app/al1s/adapters/postgres/freqtrade_models.py
+COPY --from=backend --chown=al1s:al1s migrations/env.py /app/migrations/env.py
+COPY --from=backend --chown=al1s:al1s migrations/versions/20261028_0060_freqtrade.py /app/migrations/versions/20261028_0060_freqtrade.py
+COPY --from=frontend --chown=al1s:al1s . /app/frontend/

@@ -101,10 +101,12 @@ def create_host(settings: HostSettings) -> FastAPI:
         return await call_next(request)
 
     @app.get("/inventory")
-    def observation(authorization: str | None = Header(None)) -> JsonObject:
+    def observation(
+        include_bots: bool = True, authorization: str | None = Header(None)
+    ) -> JsonObject:
         authorize(authorization)
         values = inventory(deployment)
-        if bot is not None:
+        if include_bots and bot is not None:
             from al1s.components.host.bot_inventory import bot_inventory
 
             values.extend(bot_inventory(bot.deployment))

@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,7 @@ from al1s.adapters.postgres.notification_models import EncryptedSecretRow
 from al1s.adapters.postgres.quant_models import QuantCommandRow, QuantScopeRow, QuantSettingsRow
 from al1s.quant.commands import DEFAULT_COMMANDS, normalize_keyword, validate_mappings
 from al1s.quant.contracts import QuantSettings
+from al1s.adapters.postgres.trading_reply_models import load_templates
 
 
 class QuantSettingsRecord(BaseModel):
@@ -21,6 +22,7 @@ class QuantSettingsRecord(BaseModel):
     commands: dict[str, str]
     row_version: int
     mapping_version: int
+    reply_templates: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
 class QuantSettingsRepository(MemeRepositoryBase):
@@ -52,7 +54,8 @@ class QuantSettingsRepository(MemeRepositoryBase):
                 QuantCommandRow.service_id == service_id
             )
         ).all()
-        return QuantSettingsRepository._record(row, list(scopes), dict(commands))
+        return QuantSettingsRepository._record(row, list(scopes), dict(commands)).model_copy(
+            update={"reply_templates": load_templates(session, "quant", [service_id]).get(service_id, {})})
 
     @staticmethod
     def _record(
@@ -115,6 +118,7 @@ class QuantSettingsRepository(MemeRepositoryBase):
             ).all()
             groups_by_id: dict[UUID, list[str]] = {row.service_id: [] for row in rows}
             commands_by_id: dict[UUID, dict[str, str]] = {row.service_id: {} for row in rows}
+            templates = load_templates(session, "quant", service_ids)
             for service_id, group in scopes:
                 if service_id in groups_by_id:
                     groups_by_id[service_id].append(group)
@@ -124,7 +128,7 @@ class QuantSettingsRepository(MemeRepositoryBase):
             return {
                 row.service_id: self._record(
                     row, groups_by_id[row.service_id], commands_by_id[row.service_id]
-                )
+                ).model_copy(update={"reply_templates": templates.get(row.service_id, {})})
                 for row in rows
             }
 
@@ -182,7 +186,7 @@ class QuantSettingsRepository(MemeRepositoryBase):
         self,
         service_id: UUID,
         settings: QuantSettings,
-        commands: dict[str, str],
+        commands: dict[str, str] | None,
         *,
         expected_version: int,
         operation_id: str,
@@ -205,7 +209,11 @@ class QuantSettingsRepository(MemeRepositoryBase):
             previous = self._read(session, service_id)
             if previous.row_version != expected_version:
                 raise ValueError("quant_settings_conflict")
+            commands = previous.commands if commands is None else commands
             aliases = set(session.scalars(select(MemeAliasRow.normalized_alias)).all())
+            from al1s.adapters.postgres.freqtrade_models import FreqtradeWordRow
+            aliases.update(session.scalars(select(FreqtradeWordRow.normalized_keyword)
+                .where(FreqtradeWordRow.service_id == service_id)).all())
             normalized = validate_mappings(commands, aliases)
             row = session.get(QuantSettingsRow, service_id, with_for_update=True)
             if row is None:

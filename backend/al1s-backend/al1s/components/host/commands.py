@@ -1,4 +1,6 @@
+import os
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -35,3 +37,51 @@ class CommandRunner:
             subprocess.run(
                 arguments, check=True, stdout=output, stderr=subprocess.DEVNULL, timeout=timeout
             )
+
+    def stream_gzip(self, arguments: list[str], destination: Path, timeout: int = 600) -> None:
+        compressor_args = [
+            sys.executable,
+            "-c",
+            "import gzip,shutil,sys;"
+            "f=gzip.GzipFile(filename='',fileobj=sys.stdout.buffer,mode='wb',"
+            "compresslevel=1,mtime=0);"
+            "shutil.copyfileobj(sys.stdin.buffer,f,1048576);f.close()",
+        ]
+        created = False
+        started = time.monotonic()
+        try:
+            with destination.open("xb") as output:
+                created = True
+                os.chmod(destination, 0o600)
+                producer = subprocess.Popen(
+                    arguments, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+                )
+                compressor = None
+                try:
+                    assert producer.stdout is not None
+                    try:
+                        compressor = subprocess.Popen(
+                            compressor_args,
+                            stdin=producer.stdout,
+                            stdout=output,
+                            stderr=subprocess.DEVNULL,
+                        )
+                    finally:
+                        producer.stdout.close()
+                    compressor.wait(timeout=max(0, timeout - (time.monotonic() - started)))
+                    if compressor.returncode:
+                        raise subprocess.CalledProcessError(compressor.returncode, compressor_args)
+                    producer.wait(timeout=max(0, timeout - (time.monotonic() - started)))
+                    if producer.returncode:
+                        raise subprocess.CalledProcessError(producer.returncode, arguments)
+                finally:
+                    for process in (producer, compressor):
+                        if process is not None and process.poll() is None:
+                            process.kill()
+                    for process in (producer, compressor):
+                        if process is not None:
+                            process.wait()
+        except Exception:
+            if created:
+                destination.unlink(missing_ok=True)
+            raise

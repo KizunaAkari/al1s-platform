@@ -18,6 +18,8 @@ from al1s.bots.container_control import (
     ControlError,
     DockerControl,
 )
+from al1s.bots.log_contracts import LogLevel, LogSource
+from al1s.bots.log_reader import BotLogReader
 from al1s.bots.qq_identity.contracts import QqIdentityError, QqIdentitySave, QqIdentityState
 from al1s.bots.qq_identity.control import QqIdentityGateway
 from al1s.bots.qq_identity.runtime_routes import RequestHeader, RevisionHeader
@@ -26,7 +28,8 @@ from al1s.meme_workshop.transport import MemeBackendClient
 
 
 def create_proxy(token: str, control: DockerControl, *,
-                 identity_gateway: QqIdentityGateway | None = None) -> FastAPI:
+                 identity_gateway: QqIdentityGateway | None = None,
+                 log_reader: BotLogReader | None = None) -> FastAPI:
     if len(token) < 32:
         raise ValueError("control_token_requires_32_characters")
 
@@ -37,6 +40,7 @@ def create_proxy(token: str, control: DockerControl, *,
     app = FastAPI(
         docs_url=None, redoc_url=None, openapi_url=None, dependencies=[Depends(authorize)]
     )
+    reader = log_reader if log_reader is not None else BotLogReader()
 
     @app.exception_handler(ControlError)
     async def error_handler(_request: object, error: ControlError) -> JSONResponse:
@@ -45,6 +49,10 @@ def create_proxy(token: str, control: DockerControl, *,
     @app.get("/containers/{alias}")
     def state(alias: Alias) -> ContainerState:
         return control.state(alias)
+
+    @app.get("/logs/{alias}")
+    def logs(alias: Alias, source: LogSource = "all", level: LogLevel = "important") -> JSONResponse:
+        return JSONResponse(reader.read(alias, source, level), headers={"Cache-Control": "no-store"})
 
     @app.get("/health")
     def health() -> dict[str, str]:

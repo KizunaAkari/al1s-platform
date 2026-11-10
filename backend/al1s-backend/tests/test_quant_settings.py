@@ -8,12 +8,14 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from al1s.adapters.postgres.bot_models import BotConfigVersionRow, BotServiceRow
+from al1s.adapters.postgres.freqtrade_models import FreqtradeWordRow
 from al1s.adapters.postgres.meme_models import MemeAliasRow, MemeSettingsRow
 from al1s.adapters.postgres.quant_models import QuantCommandRow, QuantScopeRow, QuantSettingsRow
 from al1s.adapters.postgres.quant_settings import QuantSettingsRepository
 from al1s.adapters.postgres.notification_models import EncryptedSecretRow
 from al1s.quant.commands import DEFAULT_COMMANDS
 from al1s.quant.contracts import QuantSettings
+from al1s.adapters.postgres.trading_reply_models import TradingReplyTemplateRow
 
 
 @compiles(JSONB, "sqlite")
@@ -35,6 +37,8 @@ def configured():
         QuantSettingsRow.__table__,
         QuantScopeRow.__table__,
         QuantCommandRow.__table__,
+        FreqtradeWordRow.__table__,
+        TradingReplyTemplateRow.__table__,
     ):
         table.create(engine)
     with engine.begin() as conn:

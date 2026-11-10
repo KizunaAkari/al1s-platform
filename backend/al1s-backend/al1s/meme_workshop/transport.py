@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from http.client import HTTPConnection, HTTPSConnection
+import re
 from urllib.parse import urlsplit
 
 
@@ -29,14 +30,21 @@ class MemeBackendClient:
             raise ValueError("invalid_meme_backend_url")
 
     def forward(
-        self, method: str, path: str, body: bytes, headers: dict[str, str]
+        self, method: str, path: str, body: bytes, headers: dict[str, str], *, timeout: float | None = None
     ) -> BackendResponse:
         if not self._address.hostname or len(self._token.encode()) < 32:
             raise ValueError("meme_backend_not_configured")
         if len(body) > 56 * 1024 * 1024 or not path.startswith("/api/v1/bots/"):
             raise ValueError("invalid_meme_backend_request")
+        if timeout is None:
+            ai_test = method == "POST" and re.fullmatch(
+                r"/api/v1/bots/ai/(?:providers/test/[0-9a-fA-F-]{36}|"
+                r"chat-profiles/[0-9a-fA-F-]{36}/[0-9a-fA-F-]{36}/test)", path)
+            timeout = 65 if ai_test else 15
+        if not 0 < timeout <= 180:
+            raise ValueError("invalid_meme_backend_timeout")
         factory = HTTPSConnection if self._address.scheme == "https" else HTTPConnection
-        connection = factory(self._address.hostname, self._address.port, timeout=15)
+        connection = factory(self._address.hostname, self._address.port, timeout=timeout)
         try:
             connection.request(
                 method,

@@ -1,0 +1,3 @@
+ARG BASE_IMAGE=al1s-platform:capital-20261029
+FROM ${BASE_IMAGE}
+COPY --from=frontend --chown=al1s:al1s . /app/frontend/

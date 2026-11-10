@@ -4,6 +4,7 @@ from starlette.responses import JSONResponse
 from al1s.app.service_state import service_state
 from al1s.bots.container_control import Alias, ContainerCommand, ControlError
 from al1s.bots.control_client import ControlClient
+from al1s.bots.log_contracts import LogLevel, LogSource
 
 router = APIRouter(prefix="/bots/containers")
 
@@ -28,3 +29,16 @@ def state(alias: Alias, request: Request) -> JSONResponse:
 @router.post("/{alias}")
 def command(alias: Alias, body: ContainerCommand, request: Request) -> JSONResponse:
     return _call(request, alias, body)
+
+
+@router.get("/{alias}/logs")
+def logs(alias: Alias, request: Request, source: LogSource = "all", level: LogLevel = "important") -> JSONResponse:
+    settings = service_state(request).settings
+    try:
+        data = ControlClient(
+            settings.bot_control_url, settings.bot_control_token.get_secret_value(),
+        ).logs(alias, source, level)
+    except ControlError as exc:
+        return JSONResponse({"code": exc.code}, status_code=exc.status,
+                            headers={"Cache-Control": "no-store"})
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})

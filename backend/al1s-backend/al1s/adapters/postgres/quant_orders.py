@@ -50,6 +50,8 @@ class OrderHistory:
     total_fees: Decimal
     quote_provider: str
     execution_provider: str | None
+    name: str | None = None
+    market: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,6 +292,8 @@ class QuantOrders:
                     QuantOrderRow.created_at,
                     QuantOrderRow.provider,
                     QuantOrderRow.execution_provider,
+                    QuantInstrumentRow.name,
+                    QuantInstrumentRow.market,
                 )
                 .join(QuantInstrumentRow, QuantInstrumentRow.id == QuantOrderRow.instrument_id)
                 .where(QuantOrderRow.account_id == account_id)
@@ -317,6 +321,8 @@ class QuantOrders:
                     *fills.get(row.id, (0, Decimal(0))),
                     row.provider,
                     row.execution_provider,
+                    row.name,
+                    row.market,
                 )
                 for row in rows
             ]

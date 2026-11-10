@@ -1,0 +1,2435 @@
+diff --git a/al1s/adapters/postgres/component_guard.py b/al1s/adapters/postgres/component_guard.py
+--- a/al1s/adapters/postgres/component_guard.py
++++ b/al1s/adapters/postgres/component_guard.py
+@@ -6,8 +6,8 @@
+ from sqlalchemy.orm import Session
+ 
+ from al1s.adapters.postgres.component_models import ComponentOperationRow
++from al1s.adapters.postgres.execution_models import TargetDeviceRow
+ from al1s.adapters.postgres.device_path_models import DeviceAuthorityRow
+-from al1s.adapters.postgres.execution_models import TargetDeviceRow
+ from al1s.execution.errors import ConflictError
+ 
+ ACTIVE = ("accepted", "preparing", "switching", "verifying", "unknown")
+diff --git a/al1s/adapters/postgres/failure_review.py b/al1s/adapters/postgres/failure_review.py
+--- a/al1s/adapters/postgres/failure_review.py
++++ b/al1s/adapters/postgres/failure_review.py
+@@ -66,8 +66,6 @@
+         task_id: UUID,
+         cursor: UUID | None,
+         now: datetime,
+-        *,
+-        execution_id: UUID | None = None,
+     ) -> dict[str, Any]:
+         query = (
+             select(Attempt, Lineup.id, Task.source_module, Snapshot.manifest)
+@@ -80,8 +78,6 @@
+             .order_by(Attempt.id)
+             .limit(21)
+         )
+-        if execution_id is not None:
+-            query = query.where(Execution.id == execution_id)
+         if cursor:
+             query = query.where(Attempt.id > cursor)
+         with self._sessions() as session:
+diff --git a/al1s/api/android_editor_channels.py b/al1s/api/android_editor_channels.py
+--- a/al1s/api/android_editor_channels.py
++++ b/al1s/api/android_editor_channels.py
+@@ -3,14 +3,13 @@
+ import asyncio
+ from collections.abc import Awaitable, Callable
+ from contextlib import suppress
+-from typing import cast
+ from uuid import UUID
+ 
+ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+ from starlette.concurrency import run_in_threadpool
+ 
+ from al1s.api.terminal_auth import authenticated_terminal_id
+-from al1s.app.admin_auth import COOKIE, AdminSessions
++from al1s.app.admin_auth import COOKIE
+ from al1s.app.service_state import service_state
+ from al1s.execution.android_editor_transport import AndroidEditorChannel
+ from al1s.execution.editor_sessions import EditorStatus
+@@ -89,9 +88,7 @@
+         await item.to_terminal.put(b"open")
+ 
+         async def check() -> bool:
+-            return cast(AdminSessions, socket.app.state.admin_sessions).valid(
+-                socket.cookies.get(COOKIE, "")
+-            )
++            return socket.app.state.admin_sessions.valid(socket.cookies.get(COOKIE, ""))
+ 
+         await relay(socket, item, browser=True, channel=channel, check_authority=check)
+     except (ExecutionDomainError, ValueError, TimeoutError, WebSocketDisconnect):
+diff --git a/al1s/api/editor_channels.py b/al1s/api/editor_channels.py
+--- a/al1s/api/editor_channels.py
++++ b/al1s/api/editor_channels.py
+@@ -12,7 +12,6 @@
+ 
+ from al1s.api.android_editor_channels import serve_browser
+ from al1s.app.admin_auth import COOKIE
+-from al1s.app.service_state import service_state
+ from al1s.execution.errors import ExecutionDomainError
+ from al1s.infrastructure.editor_relay import DirectConnect, allowed_target
+ 
+@@ -92,9 +91,7 @@
+         await socket.close(code=1008)
+         return
+     try:
+-        _, connection = await run_in_threadpool(
+-            service_state(socket).editor_sessions.detail, session_id
+-        )
++        _, connection = await run_in_threadpool(socket.app.state.editor_sessions.detail, session_id)
+     except ExecutionDomainError:
+         await socket.close(code=1008)
+         return
+diff --git a/al1s/api/editor_ocr.py b/al1s/api/editor_ocr.py
+--- a/al1s/api/editor_ocr.py
++++ b/al1s/api/editor_ocr.py
+@@ -22,7 +22,7 @@
+     if request.headers.get("authorization"):
+         raise HTTPException(403, "Operator context required")
+     session, connection = await run_in_threadpool(
+-        service_state(request).editor_sessions.detail,
++        request.app.state.editor_sessions.detail,
+         session_id,
+     )
+     target = connection.get("ocr_ws_url") if connection else None
+@@ -65,8 +65,8 @@
+             compression=None,
+         ) as upstream:
+             await asyncio.wait_for(upstream.send(bytes(body)), 5)
+-            received = await asyncio.wait_for(upstream.recv(), 30)
+-        result = json.loads(received)
++            payload = await asyncio.wait_for(upstream.recv(), 30)
++        result = json.loads(payload)
+         if not isinstance(result, dict) or not isinstance(result.get("texts"), list):
+             raise ValueError("Invalid OCR result")
+         return {"texts": [str(text)[:1000] for text in result["texts"][:200]]}
+diff --git a/al1s/api/maa_catalog_devices.py b/al1s/api/maa_catalog_devices.py
+--- a/al1s/api/maa_catalog_devices.py
++++ b/al1s/api/maa_catalog_devices.py
+@@ -84,10 +84,8 @@
+ 
+ @router.get("/editor/foreground")
+ async def editor_foreground(device_id: UUID, request: Request) -> dict[str, str]:
+-    package = await probe_foreground_package(
+-        service_state(request).editor_sessions, device_id,
+-        getattr(service_state(request), "android_editor_hub", None),
+-    )
++    package = await probe_foreground_package(service_state(request).editor_sessions, device_id,
++                                             getattr(service_state(request), "android_editor_hub", None))
+     return {"package_name": package}
+ 
+ 
+@@ -98,10 +96,8 @@
+     response: Response,
+     idempotency_key: Annotated[str, Header(alias="Idempotency-Key")],
+ ) -> EditorScriptCreatedResponse:
+-    package = await probe_foreground_package(
+-        service_state(request).editor_sessions, body.device_id,
+-        getattr(service_state(request), "android_editor_hub", None),
+-    )
++    package = await probe_foreground_package(service_state(request).editor_sessions, body.device_id,
++                                             getattr(service_state(request), "android_editor_hub", None))
+     creator = service_state(request).maa_editor_creation
+     from starlette.concurrency import run_in_threadpool
+ 
+diff --git a/al1s/api/maa_catalog_schemas.py b/al1s/api/maa_catalog_schemas.py
+--- a/al1s/api/maa_catalog_schemas.py
++++ b/al1s/api/maa_catalog_schemas.py
+@@ -197,6 +197,10 @@
+ 
+ class RenameStrategyRequest(BaseModel):
+     name: str = Field(min_length=1, max_length=255)
++
++
++class PublishStrategyRequest(StrategyDefinitionRequest):
++    expected_impact_hash: str | None = Field(default=None, pattern="^[0-9a-f]{64}$")
+ 
+ 
+ class StrategyMutationResponse(BaseModel):
+diff --git a/al1s/api/meme_proxy.py b/al1s/api/meme_proxy.py
+--- a/al1s/api/meme_proxy.py
++++ b/al1s/api/meme_proxy.py
+@@ -1,17 +1,10 @@
+-import json
+ import re
+-from urllib.error import HTTPError, URLError
+ from urllib.parse import urlencode
+-from urllib.request import ProxyHandler, build_opener
+-from uuid import UUID
+-from typing import Literal
+ 
+ from fastapi import APIRouter, HTTPException, Request, Response
+-from fastapi.responses import JSONResponse
+ from starlette.concurrency import run_in_threadpool
+ 
+ from al1s.app.service_state import service_state
+-from al1s.infrastructure.direct_http import NoRedirect
+ 
+ router = APIRouter()
+ UUID_PART = r"[0-9a-fA-F-]{36}"
+@@ -22,11 +15,10 @@
+ WORKER_PATH = re.compile(rf"(?:catalog|claim|render|{UUID_PART}/(?:send|result))\Z")
+ 
+ 
+-async def forward(request: Request, path: str, platform: str | None = None,
+-                  max_body_bytes: int = 56 * 1024 * 1024) -> Response:
++async def forward(request: Request, path: str, platform: str | None = None) -> Response:
+     body = bytearray()
+     async for chunk in request.stream():
+-        if len(body) + len(chunk) > max_body_bytes:
++        if len(body) + len(chunk) > 56 * 1024 * 1024:
+             raise HTTPException(413, "表情请求超过大小限制")
+         body.extend(chunk)
+     if any(key not in {"after_id", "limit"} for key in request.query_params):
+@@ -66,187 +58,6 @@
+ 
+ 
+ @router.api_route(
+-    "/bots/quant/settings/{service_id}", methods=["GET", "PUT"], include_in_schema=False
+-)
+-async def quant_forward(service_id: UUID, request: Request) -> Response:
+-    if request.query_params:
+-        raise HTTPException(400, "invalid_quant_query")
+-    return await forward(request, f"/api/v1/bots/quant/settings/{service_id}", "qq", 65536)
+-
+-
+-@router.get("/bots/quant/status", include_in_schema=False)
+-async def quant_status_forward(request: Request) -> Response:
+-    if request.query_params:
+-        raise HTTPException(400, "invalid_quant_query")
+-    return await forward(request, "/api/v1/bots/quant/status", "qq", 0)
+-
+-
+-@router.get("/bots/trading/commands/{service_id}/{engine}", include_in_schema=False)
+-async def trading_commands(service_id: UUID, engine: Literal["quant", "freqtrade"], request: Request):
+-    if request.query_params:
+-        raise HTTPException(400, "invalid_reply_query")
+-    return await forward(request, f"/api/v1/bots/trading/commands/{service_id}/{engine}", "qq", 0)
+-
+-
+-@router.put("/bots/trading/commands/{service_id}/{engine}/{action}", include_in_schema=False)
+-async def trading_command_save(service_id: UUID, engine: Literal["quant", "freqtrade"], action: str, request: Request):
+-    if request.query_params or not re.fullmatch(r"[a-z_]{1,16}", action):
+-        raise HTTPException(400, "invalid_reply_query")
+-    return await forward(request, f"/api/v1/bots/trading/commands/{service_id}/{engine}/{action}", "qq", 65536)
+-
+-
+-@router.post("/bots/trading/commands/{service_id}/{engine}/{action}/preview", include_in_schema=False)
+-async def trading_command_preview(service_id: UUID, engine: Literal["quant", "freqtrade"], action: str, request: Request):
+-    if request.query_params or not re.fullmatch(r"[a-z_]{1,16}", action):
+-        raise HTTPException(400, "invalid_reply_query")
+-    return await forward(request, f"/api/v1/bots/trading/commands/{service_id}/{engine}/{action}/preview", "qq", 65536)
+-
+-
+-@router.api_route('/bots/freqtrade/settings/{service_id}', methods=['GET', 'PUT'], include_in_schema=False)
+-async def freqtrade_forward(service_id: UUID, request: Request) -> Response:
+-    if request.query_params:
+-        raise HTTPException(400, 'invalid_freqtrade_query')
+-    return await forward(request, f'/api/v1/bots/freqtrade/settings/{service_id}', 'qq', 65536)
+-
+-
+-@router.get('/bots/freqtrade/status', include_in_schema=False)
+-async def freqtrade_status_forward(request: Request) -> Response:
+-    if request.query_params:
+-        raise HTTPException(400, 'invalid_freqtrade_query')
+-    return await forward(request, '/api/v1/bots/freqtrade/status', 'qq', 0)
+-
+-
+-def probe_local_vision() -> Literal["running", "stopped", "incompatible", "unknown"]:
+-    opener = build_opener(ProxyHandler({}), NoRedirect())
+-    root = "http://host.docker.internal:8188"
+-    nodes = {
+-        "/object_info/AILab_QwenVL_Advanced": "AILab_QwenVL_Advanced",
+-        "/object_info/ImageReceiver": "ImageReceiver",
+-        "/object_info/ShowText%7Cpysssss": "ShowText|pysssss",
+-    }
+-    try:
+-        def read(path: str):
+-            with opener.open(root + path, timeout=2) as response:
+-                raw = response.read(65537)
+-            if len(raw) > 65536:
+-                raise ValueError("response_too_large")
+-            return json.loads(raw)
+-
+-        stats = read("/system_stats")
+-        version = stats["system"]["comfyui_version"]
+-        match = re.match(r"^(\d+)\.(\d+)(?:\.|$)", version)
+-        if not match or tuple(map(int, match.groups())) < (0, 43):
+-            return "incompatible"
+-        for path, node in nodes.items():
+-            info = read(path)
+-            if not isinstance(info, dict) or not isinstance(info.get(node), dict):
+-                return "incompatible"
+-        return "running"
+-    except HTTPError as exc:
+-        return "unknown" if exc.code >= 500 else "incompatible"
+-    except URLError as exc:
+-        return "stopped" if isinstance(exc.reason, ConnectionRefusedError) else "unknown"
+-    except ConnectionRefusedError:
+-        return "stopped"
+-    except (TimeoutError, OSError):
+-        return "unknown"
+-    except (ValueError, TypeError, KeyError, AttributeError):
+-        return "incompatible"
+-
+-
+-@router.get("/bots/ai/local-vision/status", include_in_schema=False)
+-def local_vision_status(request: Request) -> JSONResponse:
+-    if request.query_params:
+-        raise HTTPException(400, "invalid_ai_query")
+-    return JSONResponse({"state": probe_local_vision()}, headers={"Cache-Control": "no-store"})
+-
+-
+-@router.api_route("/bots/ai/settings/{service_id}", methods=["GET", "PUT"], include_in_schema=False)
+-async def ai_settings_forward(service_id: UUID, request: Request) -> Response:
+-    if request.query_params:
+-        raise HTTPException(400, "invalid_ai_query")
+-    return await forward(request, f"/api/v1/bots/ai/settings/{service_id}", "qq", 65536)
+-
+-
+-@router.get("/bots/ai/status/{service_id}", include_in_schema=False)
+-async def ai_status_forward(service_id: UUID, request: Request) -> Response:
+-    if request.query_params:
+-        raise HTTPException(400, "invalid_ai_query")
+-    return await forward(request, f"/api/v1/bots/ai/status/{service_id}", "qq", 0)
+-
+-
+-@router.post("/bots/ai/stickers/{service_id}", include_in_schema=False)
+-async def ai_stickers_forward(service_id: UUID, request: Request) -> Response:
+-    if request.query_params:
+-        raise HTTPException(400, "invalid_ai_query")
+-    return await forward(request, f"/api/v1/bots/ai/stickers/{service_id}", "qq", 16384)
+-
+-
+-@router.post("/bots/ai/stickers/{service_id}/import/{group_id}/{offset}", include_in_schema=False)
+-async def ai_sticker_import_forward(service_id: UUID, group_id: str, offset: int, request: Request) -> Response:
+-    if request.query_params or not re.fullmatch(r"[1-9][0-9]{0,19}", group_id) or not 0 <= offset <= 100:
+-        raise HTTPException(400, "invalid_ai_query")
+-    return await forward(request, f"/api/v1/bots/ai/stickers/{service_id}/import/{group_id}/{offset}",
+-                         "qq", 32 * 1024 * 1024)
+-
+-
+-@router.get("/bots/ai/chat-profiles/{service_id}", include_in_schema=False)
+-async def ai_chat_profiles_forward(service_id: UUID, request: Request) -> Response:
+-    if request.query_params:
+-        raise HTTPException(400, "invalid_ai_query")
+-    return await forward(request, f"/api/v1/bots/ai/chat-profiles/{service_id}", "qq", 0)
+-
+-
+-@router.api_route("/bots/ai/chat-profiles/{service_id}/{profile_id}",
+-                  methods=["PUT", "DELETE"], include_in_schema=False)
+-async def ai_chat_profile_forward(service_id: UUID, profile_id: UUID, request: Request) -> Response:
+-    if request.query_params:
+-        raise HTTPException(400, "invalid_ai_query")
+-    return await forward(request, f"/api/v1/bots/ai/chat-profiles/{service_id}/{profile_id}",
+-                         "qq", 65536 if request.method == "PUT" else 0)
+-
+-
+-@router.post("/bots/ai/chat-profiles/{service_id}/{profile_id}/test", include_in_schema=False)
+-async def ai_chat_profile_test_forward(service_id: UUID, profile_id: UUID, request: Request) -> Response:
+-    if request.query_params:
+-        raise HTTPException(400, "invalid_ai_query")
+-    return await forward(request, f"/api/v1/bots/ai/chat-profiles/{service_id}/{profile_id}/test", "qq", 0)
+-
+-
+-@router.get("/bots/ai/requests/{service_id}", include_in_schema=False)
+-async def ai_requests_forward(service_id: UUID, request: Request) -> Response:
+-    return await forward(request, f"/api/v1/bots/ai/requests/{service_id}", "qq", 0)
+-
+-
+-@router.post("/bots/ai/providers/test/{service_id}", include_in_schema=False)
+-async def ai_provider_test_forward(service_id: UUID, request: Request) -> Response:
+-    if request.query_params:
+-        raise HTTPException(400, "invalid_ai_query")
+-    return await forward(request, f"/api/v1/bots/ai/providers/test/{service_id}", "qq", 4096)
+-
+-
+-@router.post("/bots/ai/sessions/{service_id}/clear", include_in_schema=False)
+-async def ai_clear_forward(service_id: UUID, request: Request) -> Response:
+-    if request.query_params:
+-        raise HTTPException(400, "invalid_ai_query")
+-    return await forward(request, f"/api/v1/bots/ai/sessions/{service_id}/clear", "qq", 4096)
+-
+-
+-@router.get("/bots/quant/credentials", include_in_schema=False)
+-async def quant_credentials_status(request: Request) -> Response:
+-    if request.query_params:
+-        raise HTTPException(400, "invalid_quant_query")
+-    return await forward(request, "/api/v1/bots/quant/credentials", "qq", 0)
+-
+-
+-@router.put("/bots/quant/credentials/{provider}", include_in_schema=False)
+-async def quant_credentials_save(provider: Literal["tushare", "gugudata"], request: Request) -> Response:
+-    if request.query_params:
+-        raise HTTPException(400, "invalid_quant_query")
+-    return await forward(request, f"/api/v1/bots/quant/credentials/{provider}", "qq", 4096)
+-
+-
+-@router.api_route(
+     "/bots/memes/{platform}/{path:path}",
+     methods=["GET", "POST", "PUT", "DELETE"],
+     include_in_schema=False,
+diff --git a/al1s/api/router.py b/al1s/api/router.py
+--- a/al1s/api/router.py
++++ b/al1s/api/router.py
+@@ -37,7 +37,6 @@
+ from al1s.api.terminal_setup_checks import router as setup_checks_router
+ from al1s.api.terminals import router as terminals_router
+ from al1s.api.terminal_identity import router as terminal_identity_router
+-from al1s.api.terminal_reachability import router as reachability_router
+ 
+ api_router = APIRouter(prefix="/api/v1")
+ api_router.include_router(lineup_router, tags=['lineup'])
+@@ -56,7 +55,6 @@
+ api_router.include_router(device_paths_router, tags=["device-paths"])
+ api_router.include_router(setup_checks_router, tags=["terminal-setup-checks"])
+ api_router.include_router(terminal_identity_router, tags=["terminal-identity"])
+-api_router.include_router(reachability_router, tags=["terminal-reachability"])
+ api_router.include_router(system_router, prefix="/system", tags=["system"])
+ api_router.include_router(terminals_router, prefix="/terminals", tags=["terminals"])
+ api_router.include_router(terminal_delivery_router, prefix="/terminal", tags=["terminal-delivery"])
+diff --git a/al1s/api/task_failure_details.py b/al1s/api/task_failure_details.py
+--- a/al1s/api/task_failure_details.py
++++ b/al1s/api/task_failure_details.py
+@@ -51,15 +51,12 @@
+     request: Request,
+     response: Response,
+     cursor: UUID | None = None,
+-    execution_id: UUID | None = None,
+     authorization: str | None = Header(default=None),
+ ) -> TaskDetailsResponse:
+     response.headers["Cache-Control"] = "no-store"
+-    service = _service(request, authorization)
+-    result = service.details(task_id, cursor) if execution_id is None else service.details(
+-        task_id, cursor, execution_id=execution_id
++    return TaskDetailsResponse.model_validate(
++        _service(request, authorization).details(task_id, cursor)
+     )
+-    return TaskDetailsResponse.model_validate(result)
+ 
+ 
+ @router.get("/{task_id}/attempts/{attempt_id}/screenshots/{artifact_id}")
+diff --git a/al1s/api/terminal_setup_checks.py b/al1s/api/terminal_setup_checks.py
+--- a/al1s/api/terminal_setup_checks.py
++++ b/al1s/api/terminal_setup_checks.py
+@@ -31,27 +31,25 @@
+     facts: Facts
+ 
+ 
+-@router.get("/terminal/setup-checks/pending", response_model=None)
+-def pending(request: Request, authorization: str | None = Header(None)) -> dict[str, object]:
++@router.get("/terminal/setup-checks/pending")
++def pending(request: Request, authorization: str | None = Header(None)):
+     terminal = authenticated_terminal_id(request, authorization)
+     result = service_state(request).terminal_setup_checks.request(terminal)
+     return {"check": asdict(result) if result else None}
+ 
+ 
+-@router.post("/terminal/setup-checks/{check_id}/claim", response_model=None)
+-def claim(
+-    check_id: UUID, body: Claim, request: Request, authorization: str | None = Header(None)
+-) -> dict[str, object]:
++@router.post("/terminal/setup-checks/{check_id}/claim")
++def claim(check_id: UUID, body: Claim, request: Request, authorization: str | None = Header(None)):
+     terminal = authenticated_terminal_id(request, authorization)
+     return asdict(
+         service_state(request).terminal_setup_checks.claim(terminal, check_id, body.instance_id)
+     )
+ 
+ 
+-@router.post("/terminal/setup-checks/{check_id}/complete", response_model=None)
++@router.post("/terminal/setup-checks/{check_id}/complete")
+ def complete(
+     check_id: UUID, body: Complete, request: Request, authorization: str | None = Header(None)
+-) -> dict[str, object]:
++):
+     terminal = authenticated_terminal_id(request, authorization)
+     return asdict(
+         service_state(request).terminal_setup_checks.complete(
+@@ -60,20 +58,16 @@
+     )
+ 
+ 
+-@router.post("/terminals/{terminal_id}/setup-check", response_model=None)
+-def request_check(
+-    terminal_id: UUID, request: Request, authorization: str | None = Header(None)
+-) -> dict[str, object] | None:
++@router.post("/terminals/{terminal_id}/setup-check")
++def request_check(terminal_id: UUID, request: Request, authorization: str | None = Header(None)):
+     if authorization is not None:
+         raise HTTPException(403, "Operator context required")
+     result = service_state(request).terminal_setup_checks.request(terminal_id, manual=True)
+     return asdict(result) if result else None
+ 
+ 
+-@router.get("/terminals/{terminal_id}/setup-check", response_model=None)
+-def latest_check(
+-    terminal_id: UUID, request: Request, authorization: str | None = Header(None)
+-) -> dict[str, object] | None:
++@router.get("/terminals/{terminal_id}/setup-check")
++def latest_check(terminal_id: UUID, request: Request, authorization: str | None = Header(None)):
+     if authorization is not None:
+         raise HTTPException(403, "Operator context required")
+     result = service_state(request).terminal_setup_checks.latest(terminal_id)
+diff --git a/al1s/app/meme_services.py b/al1s/app/meme_services.py
+--- a/al1s/app/meme_services.py
++++ b/al1s/app/meme_services.py
+@@ -10,6 +10,4 @@
+     sessions: sessionmaker[Session], objects: BlobStore, *, render_limit: int = 2
+ ) -> MemeWorkshopService:
+     repository = MemeRepository(sessions)
+-    return MemeWorkshopService(
+-        repository, MemeAssets(repository, objects), render_limit=render_limit
+-    )
++    return MemeWorkshopService(repository, MemeAssets(repository, objects), render_limit=render_limit)
+diff --git a/al1s/app/service_state.py b/al1s/app/service_state.py
+--- a/al1s/app/service_state.py
++++ b/al1s/app/service_state.py
+@@ -111,7 +111,18 @@
+ 
+ 
+ def service_state(request: HTTPConnection) -> PlatformServiceState:
+-    return cast(PlatformServiceState, request.app.state.services)
++    services = getattr(request.app.state, "services", None)
++    if isinstance(services, PlatformServiceState):
++        return services
++    # Independently mounted routers and existing test doubles retain their legacy state view.
++    return cast(PlatformServiceState, request.app.state)
++
++
++def validate_service_state(app: FastAPI) -> None:
++    services = getattr(app.state, "services", app.state)
++    missing = [name for name in PlatformServiceState.__annotations__ if not hasattr(services, name)]
++    if missing:
++        raise RuntimeError(f"Platform service assembly is incomplete: {', '.join(missing)}")
+ 
+ 
+ def install_service_state(app: FastAPI, services: PlatformServiceState) -> None:
+@@ -120,3 +131,6 @@
+     if missing:
+         raise RuntimeError(f"Platform service assembly is incomplete: {', '.join(missing)}")
+     app.state.services = services
++    # Retain existing infrastructure readers and dependency-injection entrypoints.
++    for name in PlatformServiceState.__annotations__:
++        setattr(app.state, name, getattr(services, name))
+diff --git a/al1s/components/host/app.py b/al1s/components/host/app.py
+--- a/al1s/components/host/app.py
++++ b/al1s/components/host/app.py
+@@ -101,12 +101,10 @@
+         return await call_next(request)
+ 
+     @app.get("/inventory")
+-    def observation(
+-        include_bots: bool = True, authorization: str | None = Header(None)
+-    ) -> JsonObject:
++    def observation(authorization: str | None = Header(None)) -> JsonObject:
+         authorize(authorization)
+         values = inventory(deployment)
+-        if include_bots and bot is not None:
++        if bot is not None:
+             from al1s.components.host.bot_inventory import bot_inventory
+ 
+             values.extend(bot_inventory(bot.deployment))
+diff --git a/al1s/components/host/bot_deployment.py b/al1s/components/host/bot_deployment.py
+--- a/al1s/components/host/bot_deployment.py
++++ b/al1s/components/host/bot_deployment.py
+@@ -16,7 +16,6 @@
+ SERVICES = {"qq": "llbot", "discord": "discord-worker"}
+ NAMES = {"qq": "al1s-bot-qq", "discord": "al1s-bot-discord"}
+ SELECTORS = {"qq": "AL1S_QQ_BOT_IMAGE", "discord": "AL1S_DISCORD_WORKER_IMAGE"}
+-QQ_MODE_SELECTOR = "AL1S_QQ_PROTOCOL_MODE"
+ 
+ 
+ class BotRegistration(BaseModel):
+@@ -121,22 +120,12 @@
+             if not line.strip() or line.startswith("#"):
+                 continue
+             key, _, value = line.partition("=")
+-            if key in values or key not in {*SELECTORS.values(), QQ_MODE_SELECTOR}:
++            if key not in SELECTORS.values() or not value or any(c.isspace() for c in value):
+                 raise ValueError("invalid_bot_selector")
+             values[key] = value
+-        self._validate_selectors(values)
++        if set(values) != set(SELECTORS.values()):
++            raise ValueError("incomplete_bot_selectors")
+         return values
+-
+-    @staticmethod
+-    def _validate_selectors(values: dict[str, str]) -> None:
+-        if not set(SELECTORS.values()) <= set(values) or set(values) - {
+-            *SELECTORS.values(), QQ_MODE_SELECTOR
+-        }:
+-            raise ValueError("incomplete_bot_selectors")
+-        if any(not value or any(c.isspace() for c in value) for value in values.values()):
+-            raise ValueError("invalid_bot_selector")
+-        if QQ_MODE_SELECTOR in values and values[QQ_MODE_SELECTOR] not in {"direct", "pmhq"}:
+-            raise ValueError("invalid_bot_selector")
+ 
+     def change_image(self, alias: BotAlias, image: str) -> None:
+         with HostJournal(self.settings.selectors_file.parent / ".selector-state").exclusive():
+@@ -154,7 +143,8 @@
+             raise ValueError("unexpected_bot_compose_change")
+ 
+     def write_selectors(self, values: dict[str, str]) -> None:
+-        self._validate_selectors(values)
++        if set(values) != set(SELECTORS.values()):
++            raise ValueError("incomplete_bot_selectors")
+         path = self.settings.selectors_file
+         temporary = path.with_name(".bots-" + str(uuid4()) + ".tmp")
+         temporary.write_text(
+diff --git a/al1s/components/host/bot_driver.py b/al1s/components/host/bot_driver.py
+--- a/al1s/components/host/bot_driver.py
++++ b/al1s/components/host/bot_driver.py
+@@ -103,28 +103,6 @@
+             raise ValueError("bot_candidate_identity_invalid")
+         proof = probe_bot_image(self.deployment.runner, image["Id"])
+         original = probe_bot_image(self.deployment.runner, before["Image"])
+-        if alias == "qq" and original.qq_quant_v1 and not proof.qq_quant_v1:
+-            raise ValueError("qq_quant_runtime_required")
+-        if alias == 'qq' and original.qq_freqtrade_v1 and not proof.qq_freqtrade_v1:
+-            raise ValueError('qq_freqtrade_runtime_required')
+-        if alias == 'qq' and original.qq_freqtrade_futures_v1 and not proof.qq_freqtrade_futures_v1:
+-            raise ValueError('qq_freqtrade_futures_runtime_required')
+-        if alias == 'qq' and original.qq_freqtrade_visual_v1 and not proof.qq_freqtrade_visual_v1:
+-            raise ValueError('qq_freqtrade_visual_runtime_required')
+-        if alias == 'qq' and original.qq_freqtrade_capital_v1 and not proof.qq_freqtrade_capital_v1:
+-            raise ValueError('qq_freqtrade_capital_runtime_required')
+-        if alias == 'qq' and original.qq_command_replies_v1 and not proof.qq_command_replies_v1:
+-            raise ValueError('qq_command_replies_runtime_required')
+-        if alias == 'qq' and original.qq_ai_v1 and not proof.qq_ai_v1:
+-            raise ValueError('qq_ai_runtime_required')
+-        if alias == 'qq' and original.qq_ai_personas_v1 and not proof.qq_ai_personas_v1:
+-            raise ValueError('qq_ai_personas_runtime_required')
+-        if alias == 'qq' and original.qq_ai_network_routes_v1 and not proof.qq_ai_network_routes_v1:
+-            raise ValueError('qq_ai_network_routes_runtime_required')
+-        if alias == 'qq' and original.qq_ai_smart_reply_v1 and not proof.qq_ai_smart_reply_v1:
+-            raise ValueError('qq_ai_smart_reply_runtime_required')
+-        if alias == 'qq' and original.qq_ai_group_reply_v1 and not proof.qq_ai_group_reply_v1:
+-            raise ValueError('qq_ai_group_reply_runtime_required')
+         if (alias == "qq" and original.qq_protocol_mode == "pmhq" and (
+                 proof.qq_protocol_mode != "pmhq" or not proof.qq_headed_v1
+                     or proof.qq_client_version != original.qq_client_version
+diff --git a/al1s/components/host/bot_inventory.py b/al1s/components/host/bot_inventory.py
+--- a/al1s/components/host/bot_inventory.py
++++ b/al1s/components/host/bot_inventory.py
+@@ -55,17 +55,6 @@
+                     version=proof.native_version,
+                     runtime_version=proof.runtime_version,
+                     qq_protocol_mode=proof.qq_protocol_mode,
+-                    qq_quant_v1=proof.qq_quant_v1,
+-                    qq_freqtrade_v1=proof.qq_freqtrade_v1,
+-                    qq_freqtrade_futures_v1=proof.qq_freqtrade_futures_v1,
+-                    qq_freqtrade_visual_v1=proof.qq_freqtrade_visual_v1,
+-                    qq_freqtrade_capital_v1=proof.qq_freqtrade_capital_v1,
+-                    qq_command_replies_v1=proof.qq_command_replies_v1,
+-                    qq_ai_v1=proof.qq_ai_v1,
+-                    qq_ai_personas_v1=proof.qq_ai_personas_v1,
+-                    qq_ai_network_routes_v1=proof.qq_ai_network_routes_v1,
+-                    qq_ai_group_reply_v1=proof.qq_ai_group_reply_v1,
+-                    qq_ai_smart_reply_v1=proof.qq_ai_smart_reply_v1,
+                     qq_client_version=proof.qq_client_version,
+                     pmhq_version=proof.pmhq_version,
+                     qq_identity=read_qq_identity_summary(deployment).model_dump()
+diff --git a/al1s/components/host/bot_proof.py b/al1s/components/host/bot_proof.py
+--- a/al1s/components/host/bot_proof.py
++++ b/al1s/components/host/bot_proof.py
+@@ -22,42 +22,9 @@
+     qq_client_version: str | None = Field(default=None, min_length=1, max_length=64)
+     pmhq_version: str | None = Field(default=None, min_length=1, max_length=64)
+     qq_headed_v1: bool = False
+-    qq_quant_v1: bool = False
+-    qq_freqtrade_v1: bool = False
+-    qq_freqtrade_futures_v1: bool = False
+-    qq_freqtrade_visual_v1: bool = False
+-    qq_freqtrade_capital_v1: bool = False
+-    qq_command_replies_v1: bool = False
+-    qq_ai_v1: bool = False
+-    qq_ai_personas_v1: bool = False
+-    qq_ai_network_routes_v1: bool = False
+-    qq_ai_group_reply_v1: bool = False
+-    qq_ai_smart_reply_v1: bool = False
+ 
+     @model_validator(mode="after")
+     def headed_contract(self) -> "RuntimeProof":
+-        if self.qq_ai_smart_reply_v1 and not self.qq_ai_group_reply_v1:
+-            raise ValueError("qq_ai_smart_reply_proof_invalid")
+-        if self.qq_ai_group_reply_v1 and not self.qq_ai_network_routes_v1:
+-            raise ValueError("qq_ai_group_reply_proof_invalid")
+-        if self.qq_ai_network_routes_v1 and not self.qq_ai_personas_v1:
+-            raise ValueError("qq_ai_network_routes_proof_invalid")
+-        if self.qq_ai_personas_v1 and not self.qq_ai_v1:
+-            raise ValueError("qq_ai_personas_proof_invalid")
+-        if self.qq_ai_v1 and (self.role != "qq" or not self.qq_command_replies_v1):
+-            raise ValueError("qq_ai_proof_invalid")
+-        if self.qq_freqtrade_futures_v1 and not self.qq_freqtrade_v1:
+-            raise ValueError('qq_freqtrade_futures_proof_invalid')
+-        if self.qq_freqtrade_visual_v1 and not self.qq_freqtrade_futures_v1:
+-            raise ValueError('qq_freqtrade_visual_proof_invalid')
+-        if self.qq_command_replies_v1 and not self.qq_freqtrade_capital_v1:
+-            raise ValueError("qq_command_replies_proof_invalid")
+-        if self.qq_freqtrade_capital_v1 and not self.qq_freqtrade_visual_v1:
+-            raise ValueError('qq_freqtrade_capital_proof_invalid')
+-        if self.qq_freqtrade_v1 and not self.qq_quant_v1:
+-            raise ValueError('qq_freqtrade_proof_invalid')
+-        if self.qq_quant_v1 and (self.role != "qq" or self.qq_protocol_mode != "pmhq"):
+-            raise ValueError("qq_quant_proof_invalid")
+         if self.qq_protocol_mode == "pmhq" and (
+             self.role != "qq" or not self.qq_headed_v1 or not self.qq_client_version
+             or not self.pmhq_version or self.qq_device_identity_v1
+diff --git a/al1s/components/host/journal.py b/al1s/components/host/journal.py
+--- a/al1s/components/host/journal.py
++++ b/al1s/components/host/journal.py
+@@ -121,7 +121,7 @@
+                 lock.flush()
+             lock.seek(0)
+             if os.name == "nt":
+-                msvcrt = importlib.import_module("msvcrt")
++                import msvcrt
+ 
+                 msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+             else:
+diff --git a/al1s/components/host/qq_candidate_builder.py b/al1s/components/host/qq_candidate_builder.py
+--- a/al1s/components/host/qq_candidate_builder.py
++++ b/al1s/components/host/qq_candidate_builder.py
+@@ -67,18 +67,7 @@
+             proof = probe_bot_image(self.runner, artifact["Id"])
+             if (release.native_version != "8.3.2" or proof.native_version != release.native_version
+                     or proof.runtime_version != release.runtime_version
+-                    or proof.qq_protocol_mode != "pmhq" or not proof.qq_headed_v1
+-                    or (release.runtime_version in {'2.1.0', '2.2.0', '2.3.0', '2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'} and not proof.qq_quant_v1)
+-                    or (release.runtime_version in {'2.2.0', '2.3.0', '2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'} and not proof.qq_freqtrade_v1)
+-                    or (release.runtime_version in {'2.3.0', '2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'} and not proof.qq_freqtrade_futures_v1)
+-                    or (release.runtime_version in {'2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'} and not proof.qq_freqtrade_visual_v1)
+-                    or (release.runtime_version in {'2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'} and not proof.qq_freqtrade_capital_v1)
+-                    or (release.runtime_version in {'2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'} and not proof.qq_command_replies_v1)
+-                    or (release.runtime_version in {'2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'} and not proof.qq_ai_v1)
+-                    or (release.runtime_version in {'2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'} and not proof.qq_ai_personas_v1)
+-                    or (release.runtime_version in {'2.9.0', '2.10.0', '2.11.0', '2.12.0'} and not proof.qq_ai_network_routes_v1)
+-                    or (release.runtime_version in {'2.10.0', '2.11.0', '2.12.0'} and not proof.qq_ai_group_reply_v1)
+-                    or (release.runtime_version in {'2.11.0', '2.12.0'} and not proof.qq_ai_smart_reply_v1)):
++                    or proof.qq_protocol_mode != "pmhq" or not proof.qq_headed_v1):
+                 raise ValueError("qq_headed_candidate_unverified")
+             # The frozen artifact already embeds the reviewed glibc native package.
+             # The official musl registry image is discovery metadata, never copied.
+diff --git a/al1s/components/host_client.py b/al1s/components/host_client.py
+--- a/al1s/components/host_client.py
++++ b/al1s/components/host_client.py
+@@ -29,17 +29,6 @@
+     runtime_version: str | None = None
+     qq_identity: QqIdentitySummary | None = None
+     qq_protocol_mode: Literal["direct", "pmhq"] = "direct"
+-    qq_quant_v1: bool = False
+-    qq_freqtrade_v1: bool = False
+-    qq_freqtrade_futures_v1: bool = False
+-    qq_freqtrade_visual_v1: bool = False
+-    qq_freqtrade_capital_v1: bool = False
+-    qq_command_replies_v1: bool = False
+-    qq_ai_v1: bool = False
+-    qq_ai_personas_v1: bool = False
+-    qq_ai_network_routes_v1: bool = False
+-    qq_ai_group_reply_v1: bool = False
+-    qq_ai_smart_reply_v1: bool = False
+     qq_client_version: str | None = Field(default=None, max_length=64)
+     pmhq_version: str | None = Field(default=None, max_length=64)
+ 
+@@ -62,7 +51,7 @@
+             },
+         )
+         try:
+-            with opener.open(request, timeout=25 if path == "/inventory" else 15) as response:
++            with opener.open(request, timeout=15) as response:
+                 raw = response.read(128 * 1024 + 1)
+             if len(raw) > 128 * 1024:
+                 raise ValueError("component_host_response_limit")
+@@ -70,8 +59,8 @@
+         except (OSError, ValueError):
+             raise OSError("component_host_unavailable") from None
+ 
+-    def inventory(self, *, include_bots: bool = True) -> list[NativeComponent]:
+-        result = self.request("/inventory" if include_bots else "/inventory?include_bots=false")
++    def inventory(self) -> list[NativeComponent]:
++        result = self.request("/inventory")
+         values = result.get("items") if isinstance(result, dict) else None
+         if not isinstance(values, list) or len(values) > 8:
+             raise ValueError("component_host_inventory_invalid")
+diff --git a/al1s/components/inventory.py b/al1s/components/inventory.py
+--- a/al1s/components/inventory.py
++++ b/al1s/components/inventory.py
+@@ -38,17 +38,6 @@
+         runtime_version=item.runtime_version,
+         qq_identity=item.qq_identity,
+         qq_protocol_mode=item.qq_protocol_mode,
+-        qq_quant_v1=item.qq_quant_v1,
+-        qq_freqtrade_v1=item.qq_freqtrade_v1,
+-        qq_freqtrade_futures_v1=item.qq_freqtrade_futures_v1,
+-        qq_freqtrade_visual_v1=item.qq_freqtrade_visual_v1,
+-        qq_freqtrade_capital_v1=item.qq_freqtrade_capital_v1,
+-        qq_command_replies_v1=item.qq_command_replies_v1,
+-        qq_ai_v1=item.qq_ai_v1,
+-        qq_ai_personas_v1=item.qq_ai_personas_v1,
+-        qq_ai_network_routes_v1=item.qq_ai_network_routes_v1,
+-        qq_ai_group_reply_v1=item.qq_ai_group_reply_v1,
+-        qq_ai_smart_reply_v1=item.qq_ai_smart_reply_v1,
+         qq_client_version=item.qq_client_version,
+         pmhq_version=item.pmhq_version,
+     )
+@@ -104,8 +93,7 @@
+             )
+         try:
+             native = next(
+-                (item for item in self.host.inventory(include_bots=target.kind == "bot")
+-                 if item.component == component), None
++                (item for item in self.host.inventory() if item.component == component), None
+             )
+             return native_entry(native) if native else None
+         except (OSError, ValueError, RuntimeError):
+@@ -116,7 +104,7 @@
+         try:
+             observed = {
+                 item.component: item
+-                for item in self.host.inventory(include_bots=False)
++                for item in self.host.inventory()
+                 if item.component in PLATFORM_COMPONENTS
+             }
+         except (OSError, ValueError, RuntimeError):
+diff --git a/al1s/components/operations.py b/al1s/components/operations.py
+--- a/al1s/components/operations.py
++++ b/al1s/components/operations.py
+@@ -45,42 +45,41 @@
+     summary = current.qq_identity
+     headed = getattr(current, "qq_protocol_mode", "direct") == "pmhq"
+     if release.component == "qq-bot" and headed and release.runtime_version not in {
+-        "2.0.0", "2.0.1", "2.1.0", '2.2.0', '2.3.0', '2.4.0', '2.5.0', '2.6.0',
+-        '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'
++        "2.0.0", "2.0.1", "2.1.0", '2.2.0', '2.3.0', '2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0'
+     }:
+         reasons.append("qq_headed_runtime_required")
+     if (release.component == "qq-bot" and getattr(current, "qq_quant_v1", False)
+-            and release.runtime_version not in {'2.1.0', '2.2.0', '2.3.0', '2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'}):
++            and release.runtime_version not in {'2.1.0', '2.2.0', '2.3.0', '2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0'}):
+         reasons.append("qq_quant_runtime_required")
+     if (release.component == 'qq-bot' and getattr(current, 'qq_freqtrade_v1', False)
+-            and release.runtime_version not in {'2.2.0', '2.3.0', '2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'}):
++            and release.runtime_version not in {'2.2.0', '2.3.0', '2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0'}):
+         reasons.append('qq_freqtrade_runtime_required')
+     if (release.component == 'qq-bot' and getattr(current, 'qq_freqtrade_futures_v1', False)
+-            and release.runtime_version not in {'2.3.0', '2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'}):
++            and release.runtime_version not in {'2.3.0', '2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0'}):
+         reasons.append('qq_freqtrade_futures_runtime_required')
+     if (release.component == 'qq-bot' and getattr(current, 'qq_freqtrade_visual_v1', False)
+-            and release.runtime_version not in {'2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'}):
++            and release.runtime_version not in {'2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0'}):
+         reasons.append('qq_freqtrade_visual_runtime_required')
+     if (release.component == 'qq-bot' and getattr(current, 'qq_freqtrade_capital_v1', False)
+-            and release.runtime_version not in {'2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'}):
++            and release.runtime_version not in {'2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0'}):
+         reasons.append('qq_freqtrade_capital_runtime_required')
+     if (release.component == 'qq-bot' and getattr(current, 'qq_command_replies_v1', False)
+-            and release.runtime_version not in {'2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'}):
++            and release.runtime_version not in {'2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0'}):
+         reasons.append('qq_command_replies_runtime_required')
+     if (release.component == 'qq-bot' and getattr(current, 'qq_ai_v1', False)
+-            and release.runtime_version not in {'2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'}):
++            and release.runtime_version not in {'2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0'}):
+         reasons.append('qq_ai_runtime_required')
+     if (release.component == 'qq-bot' and getattr(current, 'qq_ai_personas_v1', False)
+-            and release.runtime_version not in {'2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0'}):
++            and release.runtime_version not in {'2.8.0', '2.9.0', '2.10.0', '2.11.0'}):
+         reasons.append('qq_ai_personas_runtime_required')
+     if (release.component == 'qq-bot' and getattr(current, 'qq_ai_network_routes_v1', False)
+-            and release.runtime_version not in {'2.9.0', '2.10.0', '2.11.0', '2.12.0'}):
++            and release.runtime_version not in {'2.9.0', '2.10.0', '2.11.0'}):
+         reasons.append('qq_ai_network_routes_runtime_required')
+     if (release.component == 'qq-bot' and getattr(current, 'qq_ai_group_reply_v1', False)
+-            and release.runtime_version not in {'2.10.0', '2.11.0', '2.12.0'}):
++            and release.runtime_version not in {'2.10.0', '2.11.0'}):
+         reasons.append('qq_ai_group_reply_runtime_required')
+     if (release.component == 'qq-bot' and getattr(current, 'qq_ai_smart_reply_v1', False)
+-            and release.runtime_version not in {'2.11.0', '2.12.0'}):
++            and release.runtime_version != '2.11.0'):
+         reasons.append('qq_ai_smart_reply_runtime_required')
+     if release.component == "qq-bot" and not headed and summary is not None:
+         if summary.pending:
+diff --git a/al1s/components/ports.py b/al1s/components/ports.py
+--- a/al1s/components/ports.py
++++ b/al1s/components/ports.py
+@@ -12,4 +12,4 @@
+ 
+ 
+ class ComponentHost(Protocol):
+-    def inventory(self, *, include_bots: bool = True) -> list[NativeComponent]: ...
++    def inventory(self) -> list[NativeComponent]: ...
+diff --git a/al1s/components/types.py b/al1s/components/types.py
+--- a/al1s/components/types.py
++++ b/al1s/components/types.py
+@@ -21,17 +21,6 @@
+     runtime_version: str | None = None
+     qq_identity: QqIdentitySummary | None = None
+     qq_protocol_mode: Literal["direct", "pmhq"] = "direct"
+-    qq_quant_v1: bool = False
+-    qq_freqtrade_v1: bool = False
+-    qq_freqtrade_futures_v1: bool = False
+-    qq_freqtrade_visual_v1: bool = False
+-    qq_freqtrade_capital_v1: bool = False
+-    qq_command_replies_v1: bool = False
+-    qq_ai_v1: bool = False
+-    qq_ai_personas_v1: bool = False
+-    qq_ai_network_routes_v1: bool = False
+-    qq_ai_group_reply_v1: bool = False
+-    qq_ai_smart_reply_v1: bool = False
+     qq_client_version: str | None = None
+     pmhq_version: str | None = None
+ 
+diff --git a/al1s/execution/failure_review_service.py b/al1s/execution/failure_review_service.py
+--- a/al1s/execution/failure_review_service.py
++++ b/al1s/execution/failure_review_service.py
+@@ -9,7 +9,7 @@
+ 
+ class FailureReviewRepository(Protocol):
+     def list_attempts(
+-        self, task_id: UUID, cursor: UUID | None, now: datetime, *, execution_id: UUID | None = None
++        self, task_id: UUID, cursor: UUID | None, now: datetime
+     ) -> dict[str, Any]: ...
+     def metadata(
+         self, task: UUID, attempt: UUID, artifact: UUID, now: datetime
+@@ -27,12 +27,8 @@
+     ) -> None:
+         self.repository, self.store, self.clock = repository, store, clock
+ 
+-    def details(
+-        self, task: UUID, cursor: UUID | None, *, execution_id: UUID | None = None
+-    ) -> dict[str, Any]:
+-        if execution_id is None:
+-            return self.repository.list_attempts(task, cursor, self.clock())
+-        return self.repository.list_attempts(task, cursor, self.clock(), execution_id=execution_id)
++    def details(self, task: UUID, cursor: UUID | None) -> dict[str, Any]:
++        return self.repository.list_attempts(task, cursor, self.clock())
+ 
+     def metadata(self, task: UUID, attempt: UUID, artifact: UUID) -> RecordingFile:
+         return self.repository.metadata(task, attempt, artifact, self.clock())
+diff --git a/al1s/execution/resource_leases.py b/al1s/execution/resource_leases.py
+new file mode 100644
+--- /dev/null
++++ b/al1s/execution/resource_leases.py
+@@ -0,0 +1,123 @@
++from __future__ import annotations
++
++from datetime import timedelta
++from uuid import UUID, uuid4
++
++from sqlalchemy.exc import IntegrityError
++
++from al1s.execution.errors import (
++    ConflictError,
++    InvalidRequestError,
++    NotFoundError,
++)
++from al1s.execution.resource_base import ResourceServiceBase
++from al1s.execution.types import (
++    ExecutionLeaseRecord,
++    LeaseKind,
++    LeaseOwnerKind,
++    TargetDeviceRecord,
++)
++
++
++class LeaseOperations(ResourceServiceBase):
++    def acquire_lease(
++        self,
++        *,
++        terminal_id: UUID | None,
++        target_device_id: UUID | None,
++        lease_kind: LeaseKind,
++        owner_kind: LeaseOwnerKind,
++        owner_id: UUID,
++        ttl: timedelta,
++    ) -> ExecutionLeaseRecord:
++        if terminal_id is None and target_device_id is None:
++            raise InvalidRequestError("lease_resource_required", "Lease requires a resource")
++        if not timedelta(seconds=5) <= ttl <= timedelta(hours=4):
++            raise InvalidRequestError(
++                "invalid_lease_ttl", "Lease TTL must be between 5 seconds and 4 hours"
++            )
++        now = self._now()
++        try:
++            with self._uow_factory() as uow:
++                target: TargetDeviceRecord | None = None
++                if target_device_id is not None:
++                    target = uow.target_devices.get_active(target_device_id, for_update=True)
++                    if target is None:
++                        raise NotFoundError("target_device")
++                if terminal_id is not None:
++                    terminal = uow.terminals.get_active(terminal_id, for_update=True)
++                    if terminal is None:
++                        raise NotFoundError("terminal")
++                    if target is not None and target.managing_terminal_id != terminal_id:
++                        raise ConflictError(
++                            "target_terminal_mismatch",
++                            "Target device is not managed by the leased terminal",
++                        )
++                uow.leases.release_expired(
++                    terminal_id=terminal_id, target_device_id=target_device_id, now=now
++                )
++                if uow.leases.has_active(
++                    terminal_id=terminal_id,
++                    target_device_id=target_device_id,
++                    now=now,
++                ):
++                    raise ConflictError("resource_leased", "Execution resource is already leased")
++                lease = uow.leases.add(
++                    uuid4(),
++                    terminal_id,
++                    target_device_id,
++                    lease_kind,
++                    owner_kind,
++                    owner_id,
++                    now,
++                    now + ttl,
++                )
++                uow.commit()
++        except IntegrityError as exc:
++            raise ConflictError("resource_leased", "Execution resource is already leased") from exc
++        return lease
++
++    def renew_lease(
++        self,
++        *,
++        lease_id: UUID,
++        expected_version: int,
++        owner_kind: LeaseOwnerKind,
++        owner_id: UUID,
++        ttl: timedelta,
++    ) -> ExecutionLeaseRecord:
++        now = self._now()
++        if not timedelta(seconds=5) <= ttl <= timedelta(hours=4):
++            raise InvalidRequestError(
++                "invalid_lease_ttl", "Lease TTL must be between 5 seconds and 4 hours"
++            )
++        with self._uow_factory() as uow:
++            lease = uow.leases.get_for_update(lease_id)
++            if lease is None:
++                raise NotFoundError("execution_lease")
++            if lease.released_at is not None or lease.expires_at <= now:
++                raise ConflictError("lease_expired", "Execution lease has expired")
++            renewed = uow.leases.renew(lease_id, expected_version, owner_kind, owner_id, now + ttl)
++            if renewed is None:
++                raise ConflictError("stale_lease_owner", "Lease owner or version is stale")
++            uow.commit()
++        return renewed
++
++    def release_lease(
++        self,
++        *,
++        lease_id: UUID,
++        expected_version: int,
++        owner_kind: LeaseOwnerKind,
++        owner_id: UUID,
++    ) -> None:
++        now = self._now()
++        with self._uow_factory() as uow:
++            lease = uow.leases.get_for_update(lease_id)
++            if lease is None:
++                raise NotFoundError("execution_lease")
++            if lease.released_at is not None:
++                return
++            if not uow.leases.release(lease_id, expected_version, owner_kind, owner_id, now):
++                raise ConflictError("stale_lease_owner", "Lease owner or version is stale")
++            uow.commit()
+diff --git a/al1s/execution/scheduling_commands.py b/al1s/execution/scheduling_commands.py
+--- a/al1s/execution/scheduling_commands.py
++++ b/al1s/execution/scheduling_commands.py
+@@ -1,23 +1,37 @@
+ from __future__ import annotations
+ 
++from datetime import timedelta
+ from uuid import UUID, uuid4
+ 
+ from sqlalchemy.exc import IntegrityError
+ 
+-from al1s.components.maintenance_guard import admit_new_work
+-from al1s.execution.errors import ConflictError
++from al1s.execution.delivery_types import PackageStatus
++from al1s.execution.errors import ConflictError, InvalidRequestError, NotFoundError
+ from al1s.execution.scheduling_base import SchedulingContext
+ from al1s.execution.scheduling_helpers import (
+     _build_plan,
+     _request_hash,
+     _transition,
+ )
++from al1s.execution.scheduling_state import (
++    require_attempt_transition,
++    require_execution_transition,
++)
+ from al1s.execution.scheduling_types import (
++    AttemptCompletion,
++    AttemptStatus,
+     CreatedTask,
+     CreateTaskCommand,
++    ExecutionAttemptRecord,
++    ExecutionResult,
++    ExecutionStatus,
++    ScheduleStatus,
++    StateTransitionRecord,
+     TaskLifecycleStatus,
+     TaskRequestRecord,
+ )
++from al1s.execution.task_settlement import settle_task_after_execution
++from al1s.components.maintenance_guard import admit_new_work
+ 
+ 
+ class SchedulingCommands(SchedulingContext):
+@@ -73,9 +87,7 @@
+                 existing = uow.tasks.find_by_idempotency_key(task.idempotency_key)
+                 if existing is not None:
+                     return self._idempotent_result(uow, existing, request_hash)
+-                admit_new_work(
+-                    uow, command.requested_terminal_id, command.requested_target_device_id
+-                )
++                admit_new_work(uow, command.requested_terminal_id, command.requested_target_device_id)
+                 uow.tasks.add(task)
+                 uow.flush()
+                 if schedule is not None:
+@@ -135,3 +147,276 @@
+             raise ConflictError("task_creation_conflict", "Task creation conflicted") from exc
+         return CreatedTask(task, schedule, tuple(occurrences))
+ 
++    def start_attempt(self, attempt_id: UUID, *, correlation_id: UUID) -> ExecutionAttemptRecord:
++        """Internal Stage 3B helper; terminal APIs use TerminalDeliveryService."""
++        now = self._now()
++        with self._uow_factory() as uow:
++            attempt = uow.attempts.get_for_update(attempt_id)
++            if attempt is None:
++                raise NotFoundError("execution_attempt")
++            execution = uow.executions.get_for_update(attempt.execution_id)
++            if execution is None:
++                raise NotFoundError("execution")
++            snapshot = uow.snapshots.get_by_execution(execution.execution_id)
++            if snapshot is None:
++                raise ConflictError("execution_snapshot_missing", "Execution snapshot is missing")
++            pre_start_transitions: list[StateTransitionRecord] = []
++            if execution.status is ExecutionStatus.WAITING:
++                package = uow.packages.get_by_attempt_for_update(attempt_id)
++                if package is None or package.status is not PackageStatus.AVAILABLE:
++                    raise ConflictError(
++                        "task_package_not_available", "Task package is not available"
++                    )
++                accepted = uow.packages.set_accepted(package.package_id, package.row_version, now)
++                queued_execution = uow.executions.set_status(
++                    execution.execution_id,
++                    execution.row_version,
++                    ExecutionStatus.QUEUED.value,
++                    result=None,
++                    now=now,
++                    timeout_at=None,
++                )
++                if accepted is None or queued_execution is None:
++                    raise ConflictError(
++                        "task_package_accept_conflict", "Task package changed concurrently"
++                    )
++                uow.commands.supersede_pending(attempt_id, acknowledged_at=now)
++                pre_start_transitions.append(
++                    _transition(
++                        "execution",
++                        execution.execution_id,
++                        execution.status.value,
++                        queued_execution.status.value,
++                        "internal_package_accepted",
++                        correlation_id,
++                        now,
++                    )
++                )
++                execution = queued_execution
++            require_attempt_transition(attempt.status, AttemptStatus.RUNNING)
++            require_execution_transition(execution.status, ExecutionStatus.RUNNING)
++            updated_attempt = uow.attempts.set_status(
++                attempt.attempt_id,
++                attempt.row_version,
++                AttemptStatus.RUNNING.value,
++                result=None,
++                now=now,
++                error_code=None,
++                retryable=None,
++                failure_phase=None,
++            )
++            updated_execution = uow.executions.set_status(
++                execution.execution_id,
++                execution.row_version,
++                ExecutionStatus.RUNNING.value,
++                result=None,
++                now=now,
++                timeout_at=now + timedelta(seconds=snapshot.timeout_seconds),
++            )
++            if updated_attempt is None or updated_execution is None:
++                raise ConflictError(
++                    "attempt_start_conflict", "Execution attempt changed concurrently"
++                )
++            uow.transitions.add_many(
++                [
++                    *pre_start_transitions,
++                    _transition(
++                        "execution_attempt",
++                        attempt.attempt_id,
++                        attempt.status.value,
++                        updated_attempt.status.value,
++                        "execution_attempt_started",
++                        correlation_id,
++                        now,
++                    ),
++                    _transition(
++                        "execution",
++                        execution.execution_id,
++                        execution.status.value,
++                        updated_execution.status.value,
++                        "execution_attempt_started",
++                        correlation_id,
++                        now,
++                    ),
++                ]
++            )
++            self._record(
++                uow,
++                event_type="execution.attempt_started.v1",
++                aggregate_type="execution_attempt",
++                aggregate_id=attempt.attempt_id,
++                correlation_id=correlation_id,
++                occurred_at=now,
++                payload={
++                    "attempt_id": str(attempt.attempt_id),
++                    "execution_id": str(execution.execution_id),
++                    "attempt_no": attempt.attempt_no,
++                },
++                action="execution.attempt.start",
++                reason_code="execution_attempt_started",
++            )
++            uow.commit()
++        return updated_attempt
++
++    def complete_attempt(
++        self,
++        attempt_id: UUID,
++        *,
++        result: ExecutionResult,
++        error_code: str | None,
++        retryable: bool,
++        correlation_id: UUID,
++    ) -> AttemptCompletion:
++        if error_code is not None and len(error_code) > 100:
++            raise InvalidRequestError(
++                "invalid_execution_error_code", "Execution error code is too long"
++            )
++        now = self._now()
++        with self._uow_factory() as uow:
++            attempt = uow.attempts.get_for_update(attempt_id)
++            if attempt is None:
++                raise NotFoundError("execution_attempt")
++            execution = uow.executions.get_for_update(attempt.execution_id)
++            if execution is None:
++                raise NotFoundError("execution")
++            snapshot = uow.snapshots.get_by_execution(execution.execution_id)
++            if snapshot is None:
++                raise ConflictError("execution_snapshot_missing", "Execution snapshot is missing")
++            schedule = uow.schedules.get_by_task_for_update(execution.task_request_id)
++            require_attempt_transition(attempt.status, AttemptStatus.ENDED)
++            updated_attempt = uow.attempts.set_status(
++                attempt.attempt_id,
++                attempt.row_version,
++                AttemptStatus.ENDED.value,
++                result=result.value,
++                now=now,
++                error_code=error_code,
++                retryable=retryable,
++                failure_phase=("runtime" if result is ExecutionResult.FAILURE else None),
++            )
++            if updated_attempt is None:
++                raise ConflictError(
++                    "attempt_completion_conflict",
++                    "Execution attempt changed concurrently",
++                )
++            may_retry = (
++                result is ExecutionResult.FAILURE
++                and retryable
++                and attempt.attempt_no <= snapshot.max_retries
++                and (schedule is None or schedule.status is ScheduleStatus.ACTIVE)
++            )
++            retry_attempt: ExecutionAttemptRecord | None = None
++            if may_retry:
++                require_execution_transition(execution.status, ExecutionStatus.WAITING)
++                updated_execution = uow.executions.set_status(
++                    execution.execution_id,
++                    execution.row_version,
++                    ExecutionStatus.WAITING.value,
++                    result=None,
++                    now=now,
++                    timeout_at=None,
++                )
++                retry_attempt = ExecutionAttemptRecord(
++                    attempt_id=uuid4(),
++                    execution_id=execution.execution_id,
++                    attempt_no=attempt.attempt_no + 1,
++                    status=AttemptStatus.QUEUED,
++                    result=None,
++                    available_at=now,
++                    enqueued_at=now,
++                    started_at=None,
++                    ended_at=None,
++                    error_code=None,
++                    retryable=None,
++                    failure_phase=None,
++                    lease_id=None,
++                    row_version=1,
++                )
++                uow.attempts.add(retry_attempt)
++                self._add_delivery_for_attempt(
++                    uow,
++                    attempt=retry_attempt,
++                    snapshot=snapshot,
++                    correlation_id=correlation_id,
++                    now=now,
++                )
++                execution_reason = "execution_retry_queued"
++            else:
++                require_execution_transition(execution.status, ExecutionStatus.ENDED)
++                updated_execution = uow.executions.set_status(
++                    execution.execution_id,
++                    execution.row_version,
++                    ExecutionStatus.ENDED.value,
++                    result=result.value,
++                    now=now,
++                    timeout_at=execution.timeout_at,
++                )
++                execution_reason = "execution_completed"
++            if updated_execution is None:
++                raise ConflictError(
++                    "execution_completion_conflict", "Execution changed concurrently"
++                )
++            transitions = [
++                _transition(
++                    "execution_attempt",
++                    attempt.attempt_id,
++                    attempt.status.value,
++                    updated_attempt.status.value,
++                    "execution_attempt_completed",
++                    correlation_id,
++                    now,
++                ),
++                _transition(
++                    "execution",
++                    execution.execution_id,
++                    execution.status.value,
++                    updated_execution.status.value,
++                    execution_reason,
++                    correlation_id,
++                    now,
++                ),
++            ]
++            if retry_attempt is not None:
++                transitions.append(
++                    _transition(
++                        "execution_attempt",
++                        retry_attempt.attempt_id,
++                        None,
++                        retry_attempt.status.value,
++                        "execution_retry_queued",
++                        correlation_id,
++                        now,
++                    )
++                )
++            uow.transitions.add_many(transitions)
++            if retry_attempt is None:
++                settle_task_after_execution(
++                    uow,
++                    task_id=execution.task_request_id,
++                    schedule=schedule,
++                    correlation_id=correlation_id,
++                    now=now,
++                )
++            self._record(
++                uow,
++                event_type=(
++                    "execution.retry_queued.v1"
++                    if retry_attempt is not None
++                    else "execution.completed.v1"
++                ),
++                aggregate_type="execution",
++                aggregate_id=execution.execution_id,
++                correlation_id=correlation_id,
++                occurred_at=now,
++                payload={
++                    "execution_id": str(execution.execution_id),
++                    "attempt_id": str(attempt.attempt_id),
++                    "attempt_no": attempt.attempt_no,
++                    "result": result.value,
++                    "retry_attempt_id": (str(retry_attempt.attempt_id) if retry_attempt else None),
++                },
++                action="execution.attempt.complete",
++                reason_code=execution_reason,
++            )
++            uow.commit()
++        return AttemptCompletion(updated_attempt, updated_execution, retry_attempt)
+diff --git a/al1s/execution/scheduling_types.py b/al1s/execution/scheduling_types.py
+--- a/al1s/execution/scheduling_types.py
++++ b/al1s/execution/scheduling_types.py
+@@ -290,6 +290,13 @@
+     execution: ExecutionRecord
+     attempt: ExecutionAttemptRecord
+     snapshot: ExecutionSnapshotRecord
++
++
++@dataclass(frozen=True, slots=True)
++class AttemptCompletion:
++    attempt: ExecutionAttemptRecord
++    execution: ExecutionRecord
++    retry_attempt: ExecutionAttemptRecord | None
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+diff --git a/al1s/execution/services.py b/al1s/execution/services.py
+--- a/al1s/execution/services.py
++++ b/al1s/execution/services.py
+@@ -2,8 +2,9 @@
+ 
+ from al1s.execution.resource_base import UowFactory as UowFactory
+ from al1s.execution.resource_identity import TerminalIdentityOperations
++from al1s.execution.resource_leases import LeaseOperations
+ from al1s.execution.resource_targets import TargetDeviceOperations
+ 
+ 
+-class ExecutionResourceService(TerminalIdentityOperations, TargetDeviceOperations):
+-    """Terminal identity and target-device operations behind one API facade."""
++class ExecutionResourceService(TerminalIdentityOperations, TargetDeviceOperations, LeaseOperations):
++    """Terminal identity, target-device and lease operations behind one API facade."""
+diff --git a/al1s/freqtrade/client.py b/al1s/freqtrade/client.py
+--- a/al1s/freqtrade/client.py
++++ b/al1s/freqtrade/client.py
+@@ -2,7 +2,9 @@
+ import json
+ from uuid import UUID
+ 
+-from al1s.freqtrade.contracts import (FreqtradeChartRequest, FreqtradeCommand, FreqtradeReadRequest, FreqtradeRecord)
++from al1s.freqtrade.contracts import (
++    FreqtradeChartRequest, FreqtradeCommand, FreqtradeReadRequest, FreqtradeRecord,
++)
+ from al1s.quant.process_client import _UnixConnection
+ 
+ 
+@@ -17,7 +19,9 @@
+         self.token, self.path = token, path
+ 
+     def call(self, method: str, path: str, data=None, *, limit: int = 65536):
+-        connection = _UnixConnection(self.path, 150 if path.startswith("/command/") else (10 if path.startswith(("/query/", "/chart/")) else 5))
++        connection = _UnixConnection(self.path, 150 if path.startswith("/command/") else (
++            10 if path.startswith(("/query/", "/chart/")) else 5
++        ))
+         try:
+             connection.request(
+                 method,
+diff --git a/al1s/freqtrade/futures_service.py b/al1s/freqtrade/futures_service.py
+--- a/al1s/freqtrade/futures_service.py
++++ b/al1s/freqtrade/futures_service.py
+@@ -7,6 +7,7 @@
+ from al1s.freqtrade.commands import parse_futures_order
+ from al1s.freqtrade.contracts import FreqtradeCommand
+ from al1s.freqtrade.leverage import leverage_limit
++from al1s.freqtrade.manager import confirm_exit
+ from al1s.trading_replies.render import reply, text
+ 
+ if TYPE_CHECKING:
+@@ -104,7 +105,7 @@
+         payload = {"tradeid": str(current["trade_id"]), "ordertype": "market"}
+         if amount is not None:
+             payload["amount"] = float(amount)
+-        native.call("forceexit", payload)
++        confirm_exit(native.call("forceexit", payload), current["trade_id"])
+         trade_id = current["trade_id"]
+         summary = f"平仓 {amount if amount is not None else '全部'} 基础币"
+     service.manager.market_success = datetime.now(UTC).isoformat()
+diff --git a/al1s/freqtrade/manager.py b/al1s/freqtrade/manager.py
+--- a/al1s/freqtrade/manager.py
++++ b/al1s/freqtrade/manager.py
+@@ -12,7 +12,7 @@
+ import urllib.request
+ from dataclasses import dataclass, field
+ from pathlib import Path
+-from threading import RLock
++from threading import Condition, RLock
+ from uuid import UUID
+ 
+ from sqlalchemy import create_engine
+@@ -21,6 +21,17 @@
+ from al1s.freqtrade.contracts import FreqtradeSettings
+ from al1s.freqtrade.exit_notices import ExitNotices
+ from al1s.freqtrade.native_config import native_config
++
++
++def confirm_exit(result: object, trade_id: int) -> None:
++    if isinstance(result, dict):
++        message, status = result.get("result"), result.get("status")
++        if any(isinstance(value, str) and value.lower().startswith("error")
++               for value in (message, status)):
++            raise ValueError("框架未受理该卖出或平仓委托，请核对持仓后重试。")
++        if message == f"Created exit order for trade {trade_id}.":
++            return
++    raise OSError("freqtrade_exit_result_unconfirmed")
+ 
+ 
+ @dataclass
+@@ -48,7 +59,10 @@
+                 content = response.read(1048577)
+                 if len(content) > 1048576:
+                     raise OSError("freqtrade_response_oversize")
+-                return json.loads(content)
++                try:
++                    return json.loads(content)
++                except (ValueError, UnicodeError) as error:
++                    raise OSError("freqtrade_response_unconfirmed") from error
+         except urllib.error.HTTPError as error:
+             try:
+                 payload = json.loads(error.read(4096))
+@@ -82,6 +96,9 @@
+         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+         self.instances: dict[UUID, NativeInstance] = {}
+         self.lock = RLock()
++        self.condition = Condition(self.lock)
++        self._busy: set[UUID] = set()
++        self._closing = False
+         self.capacity = 5
+         self.market_success = None
+         self.notices = ExitNotices(repository)
+@@ -89,26 +106,46 @@
+     def ensure(self, profile, settings: FreqtradeSettings) -> NativeInstance:
+         market = getattr(profile, "market", "spot")
+         fee = settings.futures_fee if market == "futures" else settings.fee
+-        with self.lock:
++        identity = profile.id
++        with self.condition:
++            while identity in self._busy and not self._closing:
++                self.condition.wait()
++            if self._closing:
++                raise ValueError("freqtrade_manager_stopping")
+             current = self.instances.get(profile.id)
+             if current is not None and current.process.poll() is None:
+-                if current.fee != str(fee):
+-                    if any(trade.get("has_open_orders") for trade in current.call("status")):
+-                        raise ValueError("账户存在在途委托，待完成后应用新费率。")
+-                    self._stop(profile.id, mark_inactive=False)
+-                else:
++                if current.fee == str(fee):
+                     current.last_used = time.monotonic()
+                     return current
++            else:
++                current = None
+             self.instances = {
+-                key: value for key, value in self.instances.items() if value.process.poll() is None
++                key: value for key, value in self.instances.items()
++                if key in self._busy or value.process.poll() is None
+             }
+-            if len(self.instances) >= settings.max_active_accounts:
++            occupied = set(self.instances) | self._busy
++            if identity not in occupied and len(occupied) >= settings.max_active_accounts:
+                 raise ValueError("模拟账户活动容量已满，请稍后重试；既有资金和持仓保留。")
+             self.capacity = settings.max_active_accounts
++            self._busy.add(identity)
++        try:
++            if current is not None:
++                if any(trade.get("has_open_orders") for trade in current.call("status")):
++                    raise ValueError("账户存在在途委托，待完成后应用新费率。")
++                self._stop(identity, mark_inactive=False)
+             instance = self._start(profile, settings)
+-            self.instances[profile.id] = instance
+-            self.repository.set_profile(profile.id, market=market, native_active=True)
++            try:
++                self.repository.set_profile(identity, market=market, native_active=True)
++            except Exception:
++                self._terminate(instance)
++                raise
++            with self.lock:
++                self.instances[identity] = instance
+             return instance
++        finally:
++            with self.condition:
++                self._busy.discard(identity)
++                self.condition.notify_all()
+ 
+     def _start(self, profile, settings: FreqtradeSettings) -> NativeInstance:
+         namespace = "ft_" + profile.id.hex
+@@ -202,15 +239,18 @@
+                 instance.process.wait(timeout=5)
+ 
+     def _stop(self, identity: UUID, *, mark_inactive: bool) -> None:
+-        instance = self.instances.get(identity)
++        with self.lock:
++            instance = self.instances.get(identity)
+         if (instance is not None and instance.profile is not None
+             and instance.profile.market == "futures" and instance.process.poll() is None):
+             with instance.notice_lock:
+                 while not self.notices.catch_up(instance.profile, instance):
+                     pass
+-        instance = self.instances.pop(identity, None)
+         if instance is not None:
+             self._terminate(instance)
++            with self.lock:
++                if self.instances.get(identity) is instance:
++                    self.instances.pop(identity)
+         if mark_inactive:
+             self.repository.mark_inactive([identity])
+ 
+@@ -219,32 +259,54 @@
+             candidates = list(self.instances.items())
+         settings_by_id = self.repository.runtime_settings([identity for identity, _ in candidates])
+         stopped = []
+-        for identity, instance in candidates:
+-            if time.monotonic() - instance.last_used < 60:
+-                continue
+-            settings = settings_by_id.get(identity)
+-            if settings is None:
+-                continue
+-            if time.monotonic() - instance.last_used < settings.idle_seconds:
+-                continue
+-            try:
+-                if not instance.call("status"):
+-                    with self.lock:
+-                        if time.monotonic() - instance.last_used >= settings.idle_seconds:
+-                            self._stop(identity, mark_inactive=False)
+-                            stopped.append(identity)
+-            except (OSError, ValueError):
+-                continue
+-        self.repository.mark_inactive(stopped)
++        try:
++            for identity, instance in candidates:
++                if time.monotonic() - instance.last_used < 60:
++                    continue
++                settings = settings_by_id.get(identity)
++                if settings is None or time.monotonic() - instance.last_used < settings.idle_seconds:
++                    continue
++                reserved = False
++                try:
++                    if instance.call("status"):
++                        continue
++                    with self.condition:
++                        if (self._closing or identity in self._busy
++                                or self.instances.get(identity) is not instance
++                                or time.monotonic() - instance.last_used < settings.idle_seconds):
++                            continue
++                        self._busy.add(identity)
++                        reserved = True
++                    self._stop(identity, mark_inactive=False)
++                    stopped.append(identity)
++                    reserved = False
++                except (OSError, ValueError):
++                    continue
++                finally:
++                    if reserved:
++                        with self.condition:
++                            self._busy.discard(identity)
++                            self.condition.notify_all()
++            self.repository.mark_inactive(stopped)
++        finally:
++            with self.condition:
++                self._busy.difference_update(stopped)
++                self.condition.notify_all()
+ 
+     def close(self) -> None:
+-        with self.lock:
+-            for identity in list(self.instances):
+-                try:
+-                    self._stop(identity, mark_inactive=False)
+-                except Exception:
+-                    # Keep native_active for catch-up after restart, but never orphan a writer.
++        with self.condition:
++            self._closing = True
++            self.condition.notify_all()
++            while self._busy:
++                self.condition.wait()
++            identities = list(self.instances)
++        for identity in identities:
++            try:
++                self._stop(identity, mark_inactive=False)
++            except Exception:
++                # Keep native_active for catch-up after restart, but never orphan a writer.
++                with self.lock:
+                     instance = self.instances.pop(identity, None)
+-                    if instance is not None:
+-                        self._terminate(instance)
++                if instance is not None:
++                    self._terminate(instance)
+         self.database.dispose()
+diff --git a/al1s/freqtrade/runtime.py b/al1s/freqtrade/runtime.py
+--- a/al1s/freqtrade/runtime.py
++++ b/al1s/freqtrade/runtime.py
+@@ -16,7 +16,9 @@
+ 
+ from al1s.adapters.postgres.freqtrade_repository import FreqtradeRepository
+ from al1s.freqtrade.charts import Charts
+-from al1s.freqtrade.contracts import FreqtradeChartRequest, FreqtradeCommand, FreqtradeReadRequest, FreqtradeRecord
++from al1s.freqtrade.contracts import (
++    FreqtradeChartRequest, FreqtradeCommand, FreqtradeReadRequest, FreqtradeRecord,
++)
+ from al1s.freqtrade.manager import FreqtradeManager
+ from al1s.freqtrade.service import FreqtradeService, authorized_ai_source
+ from al1s.quant.socket_runtime import secure_socket
+diff --git a/al1s/freqtrade/service.py b/al1s/freqtrade/service.py
+--- a/al1s/freqtrade/service.py
++++ b/al1s/freqtrade/service.py
+@@ -15,6 +15,7 @@
+ from al1s.freqtrade.futures_service import (
+     execute_futures,
+ )
++from al1s.freqtrade.manager import confirm_exit
+ from al1s.freqtrade.presentation import history_values, number, position_values
+ from al1s.trading_replies.help_text import freqtrade_help
+ from al1s.trading_replies.render import list_reply, reply, text
+@@ -45,7 +46,7 @@
+             return {"status": "failed", "code": "account_missing"}
+         with self.manager.lock:
+             native = self.manager.instances.get(profile.id)
+-            if (profile.id in getattr(self.manager, '_busy', set()) or native is None
++            if (profile.id in self.manager._busy or native is None
+                     or native.process.poll() is not None):
+                 return {"status": "busy", "code": "account_engine_inactive"}
+         futures = request.market == "futures"
+@@ -176,7 +177,10 @@
+ 
+     def trade(self, native, command: FreqtradeCommand, fee: Decimal, request_id: UUID) -> str:
+         pair, amount = parse_order(command.action, command.arguments)
+-        trades = native.call("status")
++        try:
++            trades = native.call("status")
++        except (OSError, ValueError) as error:
++            raise ValueError("无法核验持仓，本次未发送买卖委托，请稍后重试。") from error
+         current = next((trade for trade in trades if trade["pair"] == pair), None)
+         if current is not None and current.get("has_open_orders"):
+             raise ValueError("该币对有尚未完成的委托，请先查询币成交。")
+@@ -205,7 +209,7 @@
+             data = {"tradeid": str(current["trade_id"]), "ordertype": "market"}
+             if amount is not None:
+                 data["amount"] = float(amount)
+-            native.call("forceexit", data)
++            confirm_exit(native.call("forceexit", data), current["trade_id"])
+             trade_id = current["trade_id"]
+         self.manager.market_success = datetime.now(UTC).isoformat()
+         return reply(command, "main", dict(pair=pair, side="买入" if command.action == "buy" else "卖出",
+@@ -243,7 +247,9 @@
+         page = int(args[0]) if args else 1
+         page_size = 10 if futures else 20
+         if action == "positions":
+-            rows = native.call("status")[(page - 1) * page_size : page * page_size]
++            rows = sorted(native.call("status"), key=lambda row: row["trade_id"])[
++                (page - 1) * page_size : page * page_size
++            ]
+             if futures and rows and getattr(native, "capital_version", 0) == 1:
+                 extra_by_id = {
+                     row["trade_id"]: row for row in native.call("al1s/capital")["margins"]
+@@ -259,7 +265,10 @@
+                 ]
+             if not rows:
+                 return reply(command, "empty", {"page": page}, engine="freqtrade")
+-            return list_reply(command, [position_values(row) for row in rows], dict(page=page), engine="freqtrade")
++            values = [position_values(row) for row in rows]
++            warning = ("部分持仓未能取得原生浮动盈亏，请检查行情后重试。\n"
++                       if futures and any(row["profit_abs"] is None for row in values) else "")
++            return list_reply(command, values, dict(page=page), engine="freqtrade", prefix=warning)
+         active = native.call("status")
+         start = (page - 1) * page_size
+         active_page = active[start : start + page_size]
+diff --git a/al1s/maa/app_icon_probe.py b/al1s/maa/app_icon_probe.py
+--- a/al1s/maa/app_icon_probe.py
++++ b/al1s/maa/app_icon_probe.py
+@@ -56,10 +56,10 @@
+             compression=None,
+         ) as upstream:
+             await asyncio.wait_for(upstream.send(package_name.encode("ascii")), 3)
+-            received = await asyncio.wait_for(upstream.recv(), 20)
+-        if not isinstance(received, bytes):
++            payload = await asyncio.wait_for(upstream.recv(), 20)
++        if not isinstance(payload, bytes):
+             return None
+-        return normalize_icon(received)
++        return normalize_icon(payload)
+     except Exception as exc:
+         logger.warning("Optional application icon probe failed: %s", type(exc).__name__)
+         return None
+diff --git a/al1s/maa/foreground_probe.py b/al1s/maa/foreground_probe.py
+--- a/al1s/maa/foreground_probe.py
++++ b/al1s/maa/foreground_probe.py
+@@ -57,10 +57,10 @@
+             max_queue=1,
+             compression=None,
+         ) as upstream:
+-            received = await asyncio.wait_for(upstream.recv(), 15)
+-        if not isinstance(received, bytes):
++            response = await asyncio.wait_for(upstream.recv(), 15)
++        if not isinstance(response, bytes):
+             raise ValueError("binary response required")
+-        data = json.loads(received)
++        data = json.loads(response)
+         package = data.get("package_name") if isinstance(data, dict) else None
+         if not isinstance(package, str) or not PACKAGE.fullmatch(package):
+             raise ValueError("invalid foreground package")
+diff --git a/al1s/maa/publication_service.py b/al1s/maa/publication_service.py
+--- a/al1s/maa/publication_service.py
++++ b/al1s/maa/publication_service.py
+@@ -18,6 +18,7 @@
+     ApplicationRecord,
+     QualificationKind,
+     QualificationStatus,
++    ScriptPublicationImpact,
+     ScriptQualificationReceipt,
+     ScriptRecord,
+     ScriptVersionRecord,
+@@ -73,6 +74,47 @@
+             recovery_resolver=recovery_resolver,
+             now=self._now,
+         )
++
++    def preview_publication(
++        self,
++        *,
++        script_id: UUID,
++        candidate_version_id: UUID,
++    ) -> ScriptPublicationImpact:
++        with self._uow_factory() as uow:
++            script = self._require_script(uow, script_id, for_update=False)
++            version = self._require_candidate_version(uow, script, candidate_version_id)
++            return self._impact_coordinator.preview(
++                uow,
++                script,
++                version,
++                lock_strategies=False,
++            )
++
++    def save_candidate(
++        self,
++        *,
++        script_id: UUID,
++        expected_script_version: int,
++        manifest: dict[str, Any],
++        correlation_id: UUID,
++    ) -> CandidateSaveResult:
++        now = self._now()
++        with self._uow_factory() as uow:
++            script = self._require_script(uow, script_id, for_update=True)
++            application = self._require_application(uow, script.application_id)
++            result = self.stage_candidate(
++                uow,
++                script=script,
++                application=application,
++                expected_script_version=expected_script_version,
++                manifest=manifest,
++                correlation_id=correlation_id,
++                now=now,
++                source="candidate_save",
++            )
++            uow.commit()
++            return result
+ 
+     def stage_candidate(
+         self,
+diff --git a/al1s/maa/quick_test_service.py b/al1s/maa/quick_test_service.py
+--- a/al1s/maa/quick_test_service.py
++++ b/al1s/maa/quick_test_service.py
+@@ -1,4 +1,5 @@
+ from __future__ import annotations
++from al1s.components.maintenance_guard import admit_new_work
+ 
+ from collections.abc import Callable
+ from dataclasses import dataclass
+@@ -6,7 +7,6 @@
+ from typing import Any
+ from uuid import UUID, uuid4
+ 
+-from al1s.components.maintenance_guard import admit_new_work
+ from al1s.execution.scheduling_types import (
+     CapabilityRequirements,
+     ResolvedExecutionDefinition,
+diff --git a/al1s/maa/strategy_command_service.py b/al1s/maa/strategy_command_service.py
+--- a/al1s/maa/strategy_command_service.py
++++ b/al1s/maa/strategy_command_service.py
+@@ -73,6 +73,50 @@
+                 correlation_id=correlation_id,
+             ),
+             integrity_error_mapper=self._strategy_name_conflict,
++        )
++
++    def publish_strategy(
++        self,
++        *,
++        strategy_id: UUID,
++        expected_row_version: int,
++        start_script_id: UUID,
++        process_modules: Sequence[ProcessModuleInput],
++        end_script_id: UUID,
++        start_wait_after_ms: int,
++        default_parameters: dict[str, Any],
++        expected_impact_hash: str | None,
++        idempotency_key: str,
++        correlation_id: UUID,
++    ) -> MutationExecution:
++        return self._mutations.execute(
++            operation=f"maa.strategies.publish:{strategy_id}",
++            idempotency_key=idempotency_key,
++            request_payload={
++                **self._request_payload(
++                    application_id=None,
++                    name=None,
++                    start_script_id=start_script_id,
++                    process_modules=process_modules,
++                    end_script_id=end_script_id,
++                    start_wait_after_ms=start_wait_after_ms,
++                    default_parameters=default_parameters,
++                ),
++                "expected_row_version": expected_row_version,
++                "expected_impact_hash": expected_impact_hash,
++            },
++            mutate=lambda uow: self._publish_strategy(
++                uow,
++                strategy_id=strategy_id,
++                expected_row_version=expected_row_version,
++                start_script_id=start_script_id,
++                process_modules=process_modules,
++                end_script_id=end_script_id,
++                start_wait_after_ms=start_wait_after_ms,
++                default_parameters=default_parameters,
++                expected_impact_hash=expected_impact_hash,
++                correlation_id=correlation_id,
++            ),
+         )
+ 
+     def save_strategy(
+diff --git a/al1s/maa/strategy_service.py b/al1s/maa/strategy_service.py
+--- a/al1s/maa/strategy_service.py
++++ b/al1s/maa/strategy_service.py
+@@ -150,6 +150,64 @@
+             occurred_at=now,
+         )
+         return StrategySaveResult(published, version, tuple(modules), False)
++
++    def update_strategy(
++        self,
++        *,
++        strategy_id: UUID,
++        expected_strategy_version: int,
++        start_script_id: UUID,
++        process_modules: Sequence[ProcessModuleInput],
++        end_script_id: UUID,
++        start_wait_after_ms: int = 0,
++        default_parameters: dict[str, Any] | None = None,
++        correlation_id: UUID,
++        expected_impact_hash: str | None = None,
++    ) -> StrategySaveResult:
++        now = self._now()
++        with self._uow_factory() as uow:
++            result = self.update_strategy_in_uow(
++                uow,
++                strategy_id=strategy_id,
++                expected_strategy_version=expected_strategy_version,
++                start_script_id=start_script_id,
++                process_modules=process_modules,
++                end_script_id=end_script_id,
++                start_wait_after_ms=start_wait_after_ms,
++                default_parameters=default_parameters or {},
++                expected_impact_hash=expected_impact_hash,
++                correlation_id=correlation_id,
++                now=now,
++            )
++            uow.commit()
++            return result
++
++    def preview_update(
++        self,
++        *,
++        strategy_id: UUID,
++        expected_strategy_version: int,
++        start_script_id: UUID,
++        process_modules: Sequence[ProcessModuleInput],
++        end_script_id: UUID,
++        start_wait_after_ms: int = 0,
++        default_parameters: dict[str, Any] | None = None,
++    ) -> StrategyPublicationImpact:
++        with self._uow_factory() as uow:
++            strategy = self._require_strategy(
++                uow, strategy_id, expected_strategy_version, for_update=False
++            )
++            proposed, _ = self._build_version(
++                uow,
++                strategy=strategy,
++                start_script_id=start_script_id,
++                process_modules=process_modules,
++                end_script_id=end_script_id,
++                start_wait_after_ms=start_wait_after_ms,
++                default_parameters=default_parameters or {},
++                now=self._now(),
++            )
++            return self._preview_impact(uow, strategy, proposed)
+ 
+     def update_strategy_in_uow(
+         self,
+diff --git a/al1s/quant/process_client.py b/al1s/quant/process_client.py
+--- a/al1s/quant/process_client.py
++++ b/al1s/quant/process_client.py
+@@ -36,7 +36,9 @@
+         self, method: str, path: str, body: bytes | None, headers: dict[str, str]
+     ) -> tuple[int, bytes]:
+         connection = _UnixConnection(
+-            self._path, 150 if path.startswith("/internal/command/") else (10 if path.startswith("/internal/query/") else 3)
++            self._path, 150 if path.startswith("/internal/command/") else (
++                10 if path.startswith("/internal/query/") else 3
++            )
+         )
+         try:
+             connection.request(method, path, body=body, headers=headers)
+diff --git a/al1s/quant/service.py b/al1s/quant/service.py
+--- a/al1s/quant/service.py
++++ b/al1s/quant/service.py
+@@ -110,33 +110,9 @@
+         if command.action == "balance":
+             if args:
+                 return "资产指令不接受参数。"
+-            chosen = None
+-            for provider in command.settings.provider_order:
+-                candidate = self.accounts.summary(user, provider=provider)
+-                if candidate is None:
+-                    return "尚未开户，请先发送模拟开户指令。"
+-                if chosen is None or (
+-                    chosen[1].market_value is None and candidate.priced > chosen[1].priced
+-                ):
+-                    chosen = (provider, candidate)
+-                if candidate.market_value is not None:
+-                    if chosen[1].market_value is None:
+-                        chosen = (provider, candidate)
+-                    oldest = candidate.oldest_quote
+-                    if (
+-                        oldest is None
+-                        or 0
+-                        <= (
+-                            datetime.now(UTC)
+-                            - (oldest if oldest.tzinfo else oldest.replace(tzinfo=UTC)).astimezone(
+-                                UTC
+-                            )
+-                        ).total_seconds()
+-                        <= command.settings.max_quote_age_seconds
+-                    ):
+-                        chosen = (provider, candidate)
+-                        break
+-            assert chosen is not None
++            chosen = self._select_summary(user, command.settings)
++            if chosen is None:
++                return "尚未开户，请先发送模拟开户指令。"
+             provider, summary = chosen
+             warning = "账户状态待核实。" if summary.account.state != "active" else ""
+             values = dict(cash=summary.account.cash, position_count=summary.positions,
+diff --git a/al1s/releases/contracts.py b/al1s/releases/contracts.py
+--- a/al1s/releases/contracts.py
++++ b/al1s/releases/contracts.py
+@@ -15,9 +15,7 @@
+     architecture: Literal["arm64"] = "arm64"
+     size_bytes: int = Field(gt=0, le=MAX_PACKAGE_BYTES)
+     sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+-    candidate_image: str = Field(
+-        pattern=r"^al1s-terminal(?:-next)?:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+-    )
++    candidate_image: str = Field(pattern=r"^al1s-terminal(?:-next)?:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+     expected_image_id: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+ 
+ 
+diff --git a/al1s/trading_replies/catalog.py b/al1s/trading_replies/catalog.py
+--- a/al1s/trading_replies/catalog.py
++++ b/al1s/trading_replies/catalog.py
+@@ -126,9 +126,8 @@
+     )
+     trade = variant(
+         "委托结果",
+-        "【A股模拟 · {heading}】\n{stock_label} · {quantity}股\n"
+-        "参考价：{reference_price}元\n委托号：{order_id}\n"
+-        "{pending}发送 {orders_command} 查询实际成交。",
++        "{heading}\n{stock_label}，{quantity}股，参考价 {reference_price}元。\n"
++        "委托号 {order_id}；{pending}可用 {orders_command} 查询。",
+         stock,
+     )
+     return {
+@@ -139,12 +138,12 @@
+             {
+                 "main": variant(
+                     "新开户",
+-                    "【A股模拟 · 开户成功】\n模拟账户已创建\n当前资金：{cash} 元",
++                    "模拟账户已创建，当前资金 {cash} 元。",
+                     {"cash": "100000", "status": "已创建"},
+                 ),
+                 "existing": variant(
+                     "已有账户",
+-                    "【A股模拟 · 已有账户】\n模拟账户已存在\n当前资金：{cash} 元\n资金与交易记录保持，不重复发放初始资金。",
++                    "模拟账户已存在，当前资金 {cash} 元。",
+                     {"cash": "99000", "status": "已存在"},
+                 ),
+             },
+@@ -165,9 +164,8 @@
+             {
+                 "main": variant(
+                     "可估值",
+-                    "【A股模拟 · 资产】\n模拟资金：{cash} 元\n证券市值：{market_value} 元\n"
+-                    "总资产：{total_assets} 元\n持仓：{position_count} 只证券\n"
+-                    "{quote_info}{account_warning}",
++                    "模拟资金 {cash} 元，持有 {position_count} 只证券。证券市值 {market_value} 元，"
++                    "总资产 {total_assets} 元。{quote_info}{account_warning}",
+                     dict(
+                         cash="82000",
+                         position_count=1,
+@@ -180,8 +178,8 @@
+                 ),
+                 "incomplete": variant(
+                     "行情不完整",
+-                    "【A股模拟 · 资产】\n模拟资金：{cash} 元\n持仓：{position_count} 只证券\n"
+-                    "行情不完整（{priced_count}/{position_count}），总资产暂不可计算。\n{account_warning}",
++                    "模拟资金 {cash} 元，持有 {position_count} 只证券。"
++                    "行情不完整（{priced_count}/{position_count}），总资产暂不可计算。{account_warning}",
+                     dict(cash="82000", position_count=2, priced_count=1, account_warning=""),
+                 ),
+             },
+@@ -191,10 +189,10 @@
+             "A股",
+             "分页查看已有持仓和可卖数量。",
+             {
+-                "main": variant("持仓列表", "【A股模拟持仓 · 第{page}页】\n{rows}", dict(page=1, rows="")),
++                "main": variant("持仓列表", "模拟持仓：\n{rows}", dict(page=1, rows="")),
+                 "row": variant(
+                     "单条持仓",
+-                    "{code} {name}\n持有 {quantity} 股 · 可卖 {available} 股 · 总成本 {total_cost} 元\n",
++                    "{code} {name}：{quantity} 股，可卖 {available} 股，成本 {total_cost} 元",
+                     dict(
+                         code="300750",
+                         name="宁德时代",
+@@ -203,7 +201,7 @@
+                         total_cost="22000",
+                     ),
+                 ),
+-                "empty": variant("空页", "【A股模拟持仓 · 第{page}页】\n本页没有模拟持仓。", dict(page=1)),
++                "empty": variant("空页", "本页没有模拟持仓。", dict(page=1)),
+             },
+         ),
+         "orders": command(
+@@ -211,12 +209,11 @@
+             "A股",
+             "分页查询真实委托状态和已成交数量。",
+             {
+-                "main": variant("委托列表", "【A股模拟委托 · 第{page}页】\n{rows}", dict(page=1, rows="")),
++                "main": variant("委托列表", "模拟委托：\n{rows}", dict(page=1, rows="")),
+                 "row": variant(
+                     "单条委托",
+-                    "{code} {side} · {status} · 委托 {order_id}\n"
+-                    "委托 {quantity} 股 · 已成交 {filled_quantity} 股 · 费用 {total_fees} 元\n"
+-                    "报价来源：{quote_provider} · 撮合来源：{execution_provider}\n",
++                    "{order_id} {code} {side} {quantity} 股，{status}，成交 {filled_quantity} 股，"
++                    "费用 {total_fees} 元，报价来源 {quote_provider}，撮合来源 {execution_provider}",
+                     dict(
+                         order_id="6a91e8d3",
+                         code="300750",
+@@ -229,7 +226,7 @@
+                         execution_provider="新浪",
+                     ),
+                 ),
+-                "empty": variant("空页", "【A股模拟委托 · 第{page}页】\n本页没有模拟委托或成交。", dict(page=1)),
++                "empty": variant("空页", "本页没有模拟委托或成交。", dict(page=1)),
+             },
+         ),
+         "backtest": command(
+@@ -239,13 +236,10 @@
+             {
+                 "main": variant(
+                     "回测完成",
+-                    "【A股模拟 · 回测完成】\n{strategy} · {code} · {frequency}{ma_info}\n"
+-                    "区间：{start} 至 {end}\n收益率：{return_percent}%\n"
+-                    "最大回撤：{drawdown_percent}% · 成交：{executions} 次\n\n"
+-                    "数据：{provider} · {adjustment} · 摘要 {digest}\n"
+-                    "佣金 {commission_percent}% · 每笔最低 {minimum_commission} 元\n"
+-                    "卖出税 {tax_percent}% · 滑点 {slippage_percent}%\n"
+-                    "每次买入按可用资金的75%估算，结果仅为模拟。\n{backtest_warning}",
++                    "{strategy} {code} {frequency} {start} 至 {end}{ma_info}：收益 {return_percent}%，"
++                    "最大回撤 {drawdown_percent}%，成交 {executions} 次。来源 {provider}，复权 {adjustment}，数据 {digest}；"
++                    "佣金 {commission_percent}%，最低佣金 {minimum_commission}，卖出税 {tax_percent}%，滑点 {slippage_percent}%。"
++                    "每次买入按可用资金的75%估算，结果仅为模拟。{backtest_warning}",
+                     dict(
+                         strategy="双均线",
+                         code="300750",
+@@ -270,7 +264,7 @@
+                 ),
+                 "status": variant(
+                     "已有任务状态",
+-                    "【A股模拟 · 回测状态】\n任务：{order_id}\n状态：{status}",
++                    "回测 {order_id} 状态：{status}。",
+                     dict(order_id="1234abcd", status="处理中"),
+                 ),
+             },
+@@ -287,8 +281,8 @@
+                 ),
+                 "fees": variant(
+                     "费率表",
+-                    "模拟交易费率（当前配置）\n佣金：{commission_percent}%（买卖均收）\n"
+-                    "每笔最低佣金：{minimum_commission}元\n印花税：{tax_percent}%（仅卖出）\n滑点：{slippage_percent}%\n\n"
++                    "模拟交易费率（当前配置）\n佣金：成交金额的 {commission_percent}%（买卖均收），"
++                    "每笔最低 {minimum_commission}元。\n印花税：成交金额的 {tax_percent}%（仅卖出）。\n滑点：{slippage_percent}%。\n"
+                     "历史委托按提交时保存的费率执行，当前设置用于后续新委托。",
+                     dict(
+                         commission_percent="0.0001",
+@@ -313,26 +307,23 @@
+             {
+                 "main": variant(
+                     "新开户",
+-                    f"【{group}模拟 · 开户成功】\n{market}模拟账户已创建\n"
+-                    "初始虚拟资金：{initial_cash} USDT\n"
+-                    + ("与现货钱包独立。" if futures else "与A股、合约钱包独立。"),
++                    f"{market}模拟账户已创建，初始虚拟资金 {{initial_cash}} USDT。已有账户不会重置。"
++                    + ("与现货钱包独立。" if futures else ""),
+                     dict(initial_cash="1000", status="已创建"),
+                 ),
+                 "existing": variant(
+                     "已有账户",
+-                    f"【{group}模拟 · 已有账户】\n{market}模拟账户已存在\n"
+-                    "开户初始资金：{initial_cash} USDT（非当前余额）\n资金与交易记录保持，不重复发放初始资金。"
++                    f"{market}模拟账户已存在，初始虚拟资金 {{initial_cash}} USDT。已有账户不会重置。"
+                     + ("与现货钱包独立。" if futures else ""),
+                     dict(initial_cash="1000", status="已存在"),
+                 ),
+             },
+         )
+         balance_text = (
+-            "【逐仓合约模拟资产】\n{rows}\n"
+-            "持仓未实现盈亏：{unrealized_pnl} USDT（原生估值合计）{capital_summary}\n"
+-            "来源：Binance；USDT余额含充值/追加占用，不作为实时总权益。"
++            "逐仓合约模拟资产（来源 Binance，USDT余额含充值/追加占用）：\n{rows}\n"
++            "持仓未实现盈亏（原生估值合计）：{unrealized_pnl} USDT；不作为实时总权益。{capital_summary}"
+             if futures
+-            else "【现货模拟资产】\n{rows}{capital_summary}\n来源：Binance；数量单位按资产币种，不折算为总权益。"
++            else "虚拟币模拟资产（来源 Binance，单位按资产币种）：\n{rows}{capital_summary}"
+         )
+         totals = dict(
+             rows="",
+@@ -352,8 +343,8 @@
+                 "empty": variant("无资产", balance_text, {**totals, "rows": "暂无资产。"}),
+                 "row": variant(
+                     "单个币种",
+-                    "{currency}：可用 {free} · 总量 {balance}"
+-                    + (" · 占用保证金 {used}" if futures else ""),
++                    "{currency}：可用 {free}，总量 {balance}"
++                    + ("，占用保证金 {used}" if futures else ""),
+                     dict(
+                         currency="USDT",
+                         free="900",
+@@ -364,13 +355,11 @@
+             },
+         )
+         position = (
+-            "#{trade_id} {pair} · {side} · 原开仓{leverage}倍\n"
+-            "数量 {amount} 币 · 名义金额 {notional} USDT\n"
+-            "开仓保证金 {stake_amount} + 追加 {added_margin} = 总保证金 {total_collateral} USDT\n"
+-            "浮盈亏 {profit_abs} USDT · 累计资金收付 {funding_fees} USDT\n"
+-            "模拟强平/保护价：{liquidation_price} USDT\n"
++            "#{trade_id} {pair} {side} 原开仓{leverage}倍，{amount}币；开仓保证金 {stake_amount} USDT，"
++            "追加 {added_margin} USDT，总保证金 {total_collateral} USDT；持仓名义金额 {notional} USDT；"
++            "浮盈亏 {profit_abs} USDT；累计资金收付 {funding_fees} USDT；模拟强平/保护价 {liquidation_price}。"
+             if futures
+-            else "#{trade_id} {pair}\n数量：{amount} 币 · 成本：{stake_amount} USDT\n"
++            else "#{trade_id} {pair} {amount} 币，成本 {stake_amount} USDT"
+         )
+         position_values = dict(
+             trade_id=1,
+@@ -394,17 +383,16 @@
+             group,
+             "分页显示现有持仓；单条模板控制每行。",
+             {
+-                "main": variant("持仓列表", f"【{group}模拟持仓 · 第{{page}}页】\n{{rows}}", dict(page=1, rows="")),
+-                "empty": variant("空页", f"【{group}模拟持仓 · 第{{page}}页】\n本页没有持仓。", dict(page=1)),
++                "main": variant("持仓列表", "模拟持仓：\n{rows}", dict(page=1, rows="")),
++                "empty": variant("空页", "模拟持仓：\n本页没有持仓。", dict(page=1)),
+                 "row": variant("单条持仓", position, position_values),
+             },
+         )
+         history = (
+-            "#{trade_id} {pair} · {side} · {leverage}倍 · {state}\n"
+-            "开仓保证金 {stake_amount} USDT · 原生盈亏 {profit_abs} USDT\n"
+-            "累计资金收付 {funding_fees} USDT · 退出原因：{exit_reason}\n{last_order}\n"
++            "#{trade_id} {pair} {side} {leverage}倍；保证金 {stake_amount} USDT；盈亏 {profit_abs} USDT；"
++            "累计资金收付 {funding_fees} USDT；退出原因 {exit_reason}；{last_order}"
+             if futures
+-            else "#{trade_id} {pair} · {state}\n{last_order}\n"
++            else "#{trade_id} {pair}：{state}，{last_order}"
+         )
+         order_values = dict(
+             trade_id=1,
+@@ -426,8 +414,8 @@
+             group,
+             "查询原生委托/成交；账户恢复提示由系统保留。",
+             {
+-                "main": variant("交易列表", f"【{group}模拟交易记录 · 第{{page}}页】\n{{rows}}", dict(page=1, rows="")),
+-                "empty": variant("空页", f"【{group}模拟交易记录 · 第{{page}}页】\n本页没有交易记录。", dict(page=1)),
++                "main": variant("交易列表", "虚拟币模拟交易记录：\n{rows}", dict(page=1, rows="")),
++                "empty": variant("空页", "虚拟币模拟交易记录：\n本页没有交易记录。", dict(page=1)),
+                 "row": variant("单条交易", history, order_values),
+             },
+         )
+@@ -438,11 +426,7 @@
+             {
+                 "main": variant(
+                     "随图文字",
+-                    "【{market_label}走势 · {symbol}/USDT · 最近{period}】\n"
+-                    "区间：{range_start} 至 {range_end}\n"
+-                    "最新完整收盘价：{latest_close} USDT · 区间变化：{change_percent}%\n"
+-                    "来源：{provider} · 完整K线 · 周期 {interval}\n"
+-                    "行情时间：{latest_bar_time}\n采集时间：{collected_at}（北京时间）",
++                    "{symbol}/USDT {market_label}最近{period}价格走势（Binance完整K线收盘价，北京时间）",
+                     dict(
+                         symbol="BTC",
+                         pair=position_values["pair"],
+@@ -467,8 +451,7 @@
+             {
+                 "main": variant(
+                     "充值成功",
+-                    "【{market_label}模拟 · 充值成功】\n本次充值：{capital_amount} 虚拟USDT\n"
+-                    "可用余额：{free_after} USDT\n已计入本人钱包，原资金和交易记录保留。",
++                    "本人{market_label}钱包已充值 {capital_amount} 虚拟USDT，可用余额 {free_after} USDT；原资金和交易记录保留。",
+                     dict(capital_amount=1000, free_after=1900, market_label=group),
+                 )
+             },
+@@ -481,9 +464,7 @@
+             {
+                 "main": variant(
+                     "委托提交",
+-                    "【现货模拟 · {side}委托已提交】\n{pair} · 交易 #{trade_id}\n"
+-                    + ("买入预算：{amount_text}\n" if action == "buy" else "卖出数量：{amount_text}\n")
+-                    + "提交不代表成交，发送 {orders_command} 核对。\n来源：Binance · 模拟费率：{fee_percent}%",
++                    "{pair} 模拟{side}委托已提交，交易编号 {trade_id}；提交不代表成交，请发送 {orders_command} 核对。来源 Binance，模拟费率 {fee_percent}%。",
+                     dict(
+                         pair="BTC/USDT",
+                         side=side,
+@@ -503,8 +484,7 @@
+             {
+                 "main": variant(
+                     "委托提交",
+-                    "【逐仓合约模拟 · {side}委托已提交】\n{pair} · 交易 #{trade_id}\n{summary}\n"
+-                    "提交不代表成交；实际数量和保证金以原生成交为准。\n发送 {orders_command} 核对。",
++                    "{pair} 逐仓模拟{summary}，交易 #{trade_id} 委托已提交。实际数量和保证金以原生成交为准，请发送 {orders_command} 核对。",
+                     dict(
+                         pair="BTC/USDT:USDT",
+                         summary="平仓 全部 基础币"
+@@ -526,10 +506,8 @@
+         {
+             "main": variant(
+                 "追加成功",
+-                "【逐仓合约模拟 · 保证金追加成功】\n{pair}\n本次追加：{capital_amount} 虚拟USDT\n"
+-                "追加合计：{added_total} USDT · 总保证金：{total_collateral} USDT\n"
+-                "原生模拟保护价：{liquidation_price} USDT\n可用余额：{free_after} USDT\n"
+-                "币数量不变；部分平仓后追加额保留，全部退出后解除占用。",
++                "{pair} 已追加 {capital_amount} 虚拟USDT保证金，币数量不变。追加合计 {added_total}，总保证金 {total_collateral} USDT；"
++                "原生模拟保护价 {liquidation_price}，可用余额 {free_after} USDT。部分平仓后追加额保留，全部退出后解除占用。",
+                 dict(
+                     pair="BTC/USDT:USDT",
+                     capital_amount=100,
+diff --git a/al1s/trading_replies/help_text.py b/al1s/trading_replies/help_text.py
+--- a/al1s/trading_replies/help_text.py
++++ b/al1s/trading_replies/help_text.py
+@@ -1,20 +1,18 @@
+ """Pure help text shared by real replies and example previews."""
+-
+-from al1s.trading_replies.render import text
+ 
+ 
+ def quant_help(command):
+     words = dict(command.command_words)
+     help_text = (
+-        "【A股模拟 · 量化使用帮助】\n仅供模拟交易和历史回测，不连接真实证券账户。\n"
++        "量化使用帮助\n仅供模拟交易和历史回测，不连接真实证券账户。\n"
+         "在已授权的群聊或私聊发送以下指令，参数之间用空格分隔，可先@Bot。"
+-        "\n群聊回复对群成员可见。\n\n"
++        "群聊回复对群成员可见。\n\n"
+         f"【开户】\n{words['open']} — 创建自己的模拟账户，"
+-        f"初始虚拟资金 {text(command.settings.initial_cash)} 元；已有账户不会重置。\n\n"
++        f"初始虚拟资金 {command.settings.initial_cash} 元；已有账户不会重置。\n\n"
+         f"【买卖】\n{words['buy']} 600000 100 — 提交买入100股的模拟委托。\n"
+         f"{words['sell']} 600000 100 — 提交卖出100股的模拟委托。\n"
+-        "格式：关键词 股票代码 股数；数量单位是股，不是手。\n"
+-        "已提交不代表已成交，请通过成交与委托查询核对。\n"
++        "格式：关键词 股票代码 股数；数量单位是股，不是手。"
++        "已提交不代表已成交，请通过成交与委托查询核对。"
+         "卖出受可卖数量和T+1限制；休市或行情无效时不能凭旧价成交。\n\n"
+         f"【查询】\n{words['balance']} — 查看资金、市值与总资产。\n"
+         f"{words['positions']} — 查看持仓、可卖股数与成本。\n"
+@@ -23,9 +21,9 @@
+         f"{words['orders']} 2 查看第2页（页码1–1000）。\n\n"
+         f"【回测】\n{words['backtest']} 双均线 600000 2025-01-01 2025-12-31\n"
+         "格式：关键词 策略 股票代码 起始日期 结束日期 [周期] [复权] [快线 慢线]。\n"
+-        "策略：买入持有、双均线；日期：YYYY-MM-DD。\n"
++        "策略：买入持有、双均线；日期：YYYY-MM-DD。"
+         "默认日线、不复权，双均线默认5/20；快慢线单位为所选周期的K线根数。\n"
+-        "可选周期：日线、1分钟；复权：不复权、前复权、后复权。\n"
++        "可选周期：日线、1分钟；复权：不复权、前复权、后复权。"
+         "1分钟仅支持不复权；快线和慢线仅用于双均线，需成对填写。\n"
+         f"完整示例：{words['backtest']} 双均线 600000 "
+         "2025-01-01 2025-12-31 日线 前复权 5 20\n"
+@@ -41,40 +39,38 @@
+ 
+     w = command.commands
+     spot = (
+-        "【虚拟币模拟交易帮助】\n来源 Binance · 资金为虚拟USDT · 不连接真实交易账户\n"
+-        "参数用空格分隔；群聊回复对群成员可见。\n\n"
+-        f"【现货 · 开户与交易】\n{w['open']} — 创建本人独立账户，新账户 {text(command.settings.initial_cash)} USDT。\n"
++        f"Freqtrade虚拟币现货模拟（Binance，虚拟USDT，不连接真实交易账户）\n"
++        f"{w['open']} — 创建本人独立账户，新账户 {command.settings.initial_cash} USDT。\n"
+         f"{w['buy']} BTC 100 — 花100 USDT买入BTC；也可用ETH、SOL或完整USDT币对。\n"
+         f"{w['sell']} BTC 0.001 — 卖出0.001 BTC；{w['sell']} BTC 全部 — 卖出全部。\n"
+-        "数量与最小交易金额遵循交易所规则；已提交不代表已成交。\n\n"
+-        f"【现货 · 查询】\n{w['balance']} — 查询各币余额。\n{w['positions']} — 查询持仓。\n"
+-        f"{w['orders']} — 查询委托和成交。\n"
+-        f"持仓/成交每页20条；例：{w['positions']} 2，查询第2页。"
++        f"{w['balance']} — 查询各币余额。\n{w['positions']} — 查询持仓。\n"
++        f"{w['orders']} — 查询委托和成交；持仓/成交可附页码，每页20条。\n"
++        f"{w['help']} — 查看当前帮助。\n数量与最小交易金额遵循交易所规则。"
++        "已提交不代表已成交；群回复对群成员可见。"
+     )
+     if "deposit" in w:
+-        spot += f"\n\n【现货 · 虚拟充值】\n{w['deposit']} 1000 — 给本人已有现货钱包充值1000虚拟USDT，保留原记录。"
++        spot += f"\n{w['deposit']} 1000 — 给本人已有现货钱包充值1000虚拟USDT，保留原记录。"
+     if not command.settings.futures_enabled:
+         return (
+             spot
+             + (
+-                f"\n\n【价格走势】\n{w['chart']} BTC 1小时 — 查看现货价格走势图，无需开户。\n"
+-                "时间范围可省略，默认1小时；可选15分钟/1小时/4小时/1天/7天。"
++                f"\n{w['chart']} BTC [1小时] — PNG价格走势，无需开户；"
++                "可选15分钟/1小时/4小时/1天/7天。"
+                 if "chart" in w
+                 else ""
+             )
+-            + f"\n\n合约模拟当前未启用。\n{w['help']} — 查看当前指令与用法。"
++            + "\n合约模拟当前未启用。"
+         )
+     charts = (
+-        f"\n\n【价格走势 · 无需开户】\n{w['chart']} BTC 1小时 — 现货价格走势图。\n"
+-        f"{w['f_chart']} BTC 4小时 — 合约价格走势图。\n"
+-        "时间范围可省略，默认1小时；可选15分钟/1小时/4小时/1天/7天。"
++        f"\n{w['chart']} BTC [1小时] / {w['f_chart']} BTC 4小时 — "
++        "现货/合约PNG价格走势，无需开户；可选15分钟/1小时/4小时/1天/7天。"
+         if "chart" in w and "f_chart" in w
+         else ""
+     )
+     capital = (
+-        f"\n\n【合约 · 虚拟资金】\n{w['f_deposit']} 1000 — 给本人合约钱包增加1000虚拟USDT。"
++        f"\n{w['f_deposit']} 1000 — 给本人合约钱包增加1000虚拟USDT。"
+         f"\n{w['f_margin']} BTC 100 — 从可用余额划100 USDT给已有仓位，币数量不变；"
+-        "部分平仓后追加额保留，全部退出后释放。\n金额须为正、最多4位小数，"
++        "部分平仓后追加额保留，全部退出后释放。金额须为正、最多4位小数，"
+         "每次最多10亿、累计充值最多1万亿虚拟USDT；不支持提现或自动开户。"
+         if "f_deposit" in w and "f_margin" in w
+         else ""
+@@ -82,8 +78,7 @@
+     return (
+         spot
+         + futures_help(command)
++        + charts
+         + capital
+-        + charts
+-        + "\n\n强平/保护平仓确认后在原开仓会话提醒，群内@本人。"
+-        + f"\n{w['help']} — 查看当前指令与用法。"
++        + "\n强平/保护平仓确认后在原开仓会话提醒，群内@本人。"
+     )

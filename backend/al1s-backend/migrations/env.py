@@ -4,12 +4,18 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from al1s.adapters.postgres import artifact_models as artifact_models
+from al1s.adapters.postgres import trading_reply_models as trading_reply_models
+from al1s.adapters.postgres import trading_admin_models as trading_admin_models
 from al1s.adapters.postgres import bot_models as bot_models
+from al1s.adapters.postgres import bot_ai_models as bot_ai_models
+from al1s.adapters.postgres import bot_drawing_models as bot_drawing_models
+from al1s.adapters.postgres import bot_ai_history_models as bot_ai_history_models
 from al1s.adapters.postgres import component_models as component_models
 from al1s.adapters.postgres import delivery_models as delivery_models
 from al1s.adapters.postgres import device_path_models as device_path_models
 from al1s.adapters.postgres import discord_forward_models as discord_forward_models
 from al1s.adapters.postgres import editor_models as editor_models
+from al1s.adapters.postgres import freqtrade_models as freqtrade_models
 from al1s.adapters.postgres import execution_models as execution_models
 from al1s.adapters.postgres import lexicon_models as lexicon_models
 from al1s.adapters.postgres import lineup_models as lineup_models

@@ -1,0 +1,6 @@
+Upstream nagatoquin33/astrbot_plugin_stealer 30f8a8009a06eed53cdde28276c93c01b75b6da7
+Archive SHA256 74b71eded0506506d866ea2b88d4e513fc2bb3308bb1f4813d680aaf06f309b8
+AL1S changes: namespace original tools; disable autonomous/cloud side paths; isolate capture provider per job; keep GIF analysis files in plugin cache; single bounded capture worker; scope managed content hashes and perceptual dedup by service/group; classify only explicitly selected images without an automatic meme veto.
+search/managed_rank.py adapts the text-only recall and scoring in core/search/meme_smart_select_service.py, meme_search_engine.py and search_features.py; embedding and framework event hooks are not loaded.
+Unused embedding repository code was removed; existing SQLite tables remain for compatibility and rollback.
+Upstream AGPL-3.0 license and full corresponding source are retained.

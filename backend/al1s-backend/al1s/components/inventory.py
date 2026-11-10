@@ -39,6 +39,17 @@ def native_entry(item: NativeComponent) -> ComponentInventoryEntry:
         qq_identity=item.qq_identity,
         qq_protocol_mode=item.qq_protocol_mode,
         qq_quant_v1=item.qq_quant_v1,
+        qq_freqtrade_v1=item.qq_freqtrade_v1,
+        qq_freqtrade_futures_v1=item.qq_freqtrade_futures_v1,
+        qq_freqtrade_visual_v1=item.qq_freqtrade_visual_v1,
+        qq_freqtrade_capital_v1=item.qq_freqtrade_capital_v1,
+        qq_command_replies_v1=item.qq_command_replies_v1,
+        qq_ai_v1=item.qq_ai_v1,
+        qq_ai_personas_v1=item.qq_ai_personas_v1,
+        qq_ai_network_routes_v1=item.qq_ai_network_routes_v1,
+        qq_ai_group_reply_v1=item.qq_ai_group_reply_v1,
+        qq_ai_smart_reply_v1=item.qq_ai_smart_reply_v1,
+        qq_comfy_drawing_v1=item.qq_comfy_drawing_v1,
         qq_client_version=item.qq_client_version,
         pmhq_version=item.pmhq_version,
     )
@@ -94,7 +105,8 @@ class ComponentInventoryService:
             )
         try:
             native = next(
-                (item for item in self.host.inventory() if item.component == component), None
+                (item for item in self.host.inventory(include_bots=target.kind == "bot")
+                 if item.component == component), None
             )
             return native_entry(native) if native else None
         except (OSError, ValueError, RuntimeError):
@@ -105,7 +117,7 @@ class ComponentInventoryService:
         try:
             observed = {
                 item.component: item
-                for item in self.host.inventory()
+                for item in self.host.inventory(include_bots=False)
                 if item.component in PLATFORM_COMPONENTS
             }
         except (OSError, ValueError, RuntimeError):

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -22,6 +22,11 @@ class Reply:
     source: CommandSource
     content: str
     status: str
+    image: bytes | None = None
+    mention_id: str | None = None
+    quote_message: bool = True
+    expires_at: datetime | None = None
+    action: str = "help"
 
 
 def _reply(row: QuantReplyRow) -> Reply:
@@ -36,6 +41,11 @@ def _reply(row: QuantReplyRow) -> Reply:
         ),
         row.content,
         row.status,
+        row.image,
+        row.mention_id,
+        row.quote_message,
+        row.expires_at,
+        row.action,
     )
 
 
@@ -44,7 +54,13 @@ class QuantReplies:
         self.sessions = sessions
 
     def enqueue(
-        self, service_id: UUID, command: QuantCommand, content: str, interval_seconds: int
+        self,
+        service_id: UUID,
+        command: QuantCommand,
+        content: str,
+        interval_seconds: int,
+        *,
+        image: bytes | None = None,
     ) -> tuple[Reply, bool]:
         if (
             not isinstance(content, str)
@@ -54,6 +70,12 @@ class QuantReplies:
             or command.source.scope_kind not in {"qq_group", "qq_private"}
         ):
             raise ValueError("quant_reply_invalid")
+        if image is not None and (
+            not isinstance(image, bytes)
+            or not image.startswith(b"\x89PNG\r\n\x1a\n")
+            or len(image) > 524288
+        ):
+            raise ValueError("quant_reply_image_invalid")
         source = command.source
         digest = fingerprint(
             {
@@ -86,6 +108,8 @@ class QuantReplies:
                     action=command.action,
                     mapping_version=command.mapping_version,
                     content=content,
+                    image=image,
+                    expires_at=now + timedelta(minutes=15) if image is not None else None,
                     interval_seconds=interval_seconds,
                     status="queued",
                     created_at=now,
@@ -115,9 +139,21 @@ class QuantReplies:
     ) -> Reply | None:
         if now.tzinfo is None:
             raise ValueError("quant_reply_time_invalid")
-        if eligible_services is not None and not eligible_services:
-            return None
         with self.sessions.begin() as session:
+            expired = (
+                select(QuantReplyRow.id)
+                .where(QuantReplyRow.status == "queued", QuantReplyRow.expires_at <= now)
+                .order_by(QuantReplyRow.expires_at, QuantReplyRow.id)
+                .limit(100)
+                .with_for_update(skip_locked=True)
+            )
+            session.execute(
+                update(QuantReplyRow)
+                .where(QuantReplyRow.id.in_(expired))
+                .values(status="unknown", image=None, updated_at=now)
+            )
+            if eligible_services is not None and not eligible_services:
+                return None
             session.execute(
                 insert(QuantSendGateRow)
                 .values(platform="qq", next_allowed_at=None)
@@ -155,6 +191,7 @@ class QuantReplies:
                 .join(BotServiceRow, BotServiceRow.id == QuantReplyRow.service_id)
                 .where(
                     QuantReplyRow.status == "queued",
+                    or_(QuantReplyRow.expires_at.is_(None), QuantReplyRow.expires_at > now),
                     BotServiceRow.enabled,
                     BotServiceRow.deleted_at.is_(None),
                 )
@@ -183,6 +220,7 @@ class QuantReplies:
             if row is None or (row.status != "sending" and row.status != status):
                 raise ValueError("quant_reply_state_conflict")
             row.status, row.updated_at = status, now
+            row.image = None
 
     def recover_sending(self, now: datetime) -> int:
         if now.tzinfo is None:
@@ -191,6 +229,26 @@ class QuantReplies:
             result = session.execute(
                 update(QuantReplyRow)
                 .where(QuantReplyRow.status == "sending")
-                .values(status="unknown", updated_at=now)
+                .values(status="unknown", image=None, updated_at=now)
             )
             return result.rowcount
+
+    def can_send(self, reply: Reply) -> bool:
+        if reply.action not in {"f_exit", "chart", "f_chart"}:
+            return True
+        from al1s.adapters.postgres.freqtrade_models import FreqtradeSettingsRow
+
+        with self.sessions() as session:
+            settings = session.get(FreqtradeSettingsRow, reply.service_id)
+            return bool(
+                settings
+                and settings.enabled
+                and (reply.action == "chart" or settings.futures_enabled)
+                and (
+                    (
+                        reply.source.scope_kind == "qq_group"
+                        and reply.source.target_id in settings.groups
+                    )
+                    or (reply.source.scope_kind == "qq_private" and settings.private_enabled)
+                )
+            )

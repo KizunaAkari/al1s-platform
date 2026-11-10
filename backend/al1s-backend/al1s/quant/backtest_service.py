@@ -1,6 +1,7 @@
 """QQ request parsing and validated fixed-strategy historical backtests."""
 
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from threading import BoundedSemaphore
 from uuid import UUID
 
@@ -15,6 +16,7 @@ from al1s.quant.market_data import normalize_auction_bars, validate_bars
 from al1s.quant.market_rules import CHINA
 from al1s.quant.provider_routing import PROVIDER_NAMES, eligible_sources, select_source
 from al1s.quant.source_client import MarketSource
+from al1s.trading_replies.render import render, reply
 
 
 class QuantBacktest:
@@ -83,7 +85,7 @@ class QuantBacktest:
         previous = self.repository.find(service_id, command)
         if previous is not None:
             if previous.status != "completed":
-                return f"回测 {str(previous.id)[:8]} 状态：{previous.status}。"
+                return reply(command, "status", dict(order_id=str(previous.id)[:8], status=previous.status))
             return self._summary(
                 previous.total_return,
                 previous.max_drawdown,
@@ -99,6 +101,7 @@ class QuantBacktest:
                 adjustment,
                 frequency,
                 previous.provider,
+                command=command,
             )
         segments = [(current, start, end)]
         if market == "BJ":
@@ -185,7 +188,7 @@ class QuantBacktest:
             )
             if not created:
                 if record.status != "completed":
-                    return f"回测 {str(record.id)[:8]} 状态：{record.status}。"
+                    return reply(command, "status", dict(order_id=str(record.id)[:8], status=record.status))
                 return self._summary(
                     record.total_return,
                     record.max_drawdown,
@@ -201,6 +204,7 @@ class QuantBacktest:
                     adjustment,
                     frequency,
                     record.provider or provider,
+                    command=command,
                 )
             try:
                 result = self.native(
@@ -239,6 +243,7 @@ class QuantBacktest:
                 adjustment,
                 frequency,
                 provider,
+                command=command,
             )
         finally:
             self._slots.release()
@@ -259,17 +264,15 @@ class QuantBacktest:
         adjustment,
         frequency,
         provider,
+        command=None,
     ) -> str:
         period = f"，均线 {fast}/{slow}" if strategy == "双均线" else ""
         frequency_label = "日线" if frequency == "1d" else "1分钟"
-        return (
-            f"{strategy} {code} {frequency_label} {start} 至 {end}{period}："
-            f"收益 {total * 100:.2f}%，"
-            f"最大回撤 {drawdown * 100:.2f}%，成交 {executions} 次。"
-            f"来源 {PROVIDER_NAMES[provider]}，"
-            f"复权 {adjustment or '不复权'}，数据 {digest[:12]}；"
-            f"佣金 {settings.commission_rate}，最低佣金 {settings.minimum_commission}，"
-            f"卖出税 {settings.stamp_tax_rate}，滑点 {settings.slippage}。"
-            "每次买入按可用资金的75%估算，结果仅为模拟。"
-            + ("不复权回测未计入分红送转，收益可能失真。" if not adjustment else "")
-        )
+        values = dict(strategy=strategy, code=code, frequency=frequency_label, start=start, end=end,
+            ma_info=period, fast=fast, slow=slow, return_percent=(total*100).quantize(Decimal("0.01")),
+            drawdown_percent=(drawdown*100).quantize(Decimal("0.01")), executions=executions,
+            provider=PROVIDER_NAMES[provider], adjustment=adjustment or "不复权", digest=digest[:12],
+            commission_percent=settings.commission_rate*100, minimum_commission=settings.minimum_commission,
+            tax_percent=settings.stamp_tax_rate*100, slippage_percent=settings.slippage*100,
+            backtest_warning="不复权回测未计入分红送转，收益可能失真。" if not adjustment else "")
+        return reply(command, "main", values) if command is not None else render("quant", "backtest", "main", values)

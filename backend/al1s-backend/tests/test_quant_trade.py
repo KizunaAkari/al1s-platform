@@ -62,7 +62,7 @@ def test_submit_falls_back_and_records_actual_quote_provider():
     command = QuantCommand(CommandSource(message_id="2", scope_kind="qq_group", target_id="123", sender_id="456"),
                            "buy", ("600000", "100"), 1, int(now.timestamp()), settings=QuantSettings(), settings_version=1)
     result = QuantTrade(source, accounts, instruments, orders, cache, corporate=MagicMock(), now=lambda: now).submit(uuid4(), command)
-    assert "腾讯" in result
+    assert "来源" not in result and "100股" in result
     assert [call.kwargs["provider"] for call in source.minutes.call_args_list] == ["sina", "tencent"]
     assert orders.accept.call_args.kwargs["quote_provider"] == "tencent"
     assert cache.store.call_args.args[1] == "tencent"
@@ -82,7 +82,7 @@ def test_replayed_order_reply_uses_original_quote_provider_and_price():
     command = QuantCommand(CommandSource(message_id="2", scope_kind="qq_group", target_id="123", sender_id="456"),
                            "buy", ("600000", "100"), 1, int(now.timestamp()), settings=QuantSettings(), settings_version=1)
     result = QuantTrade(source, accounts, instruments, orders, cache, corporate=MagicMock(), now=lambda: now).submit(uuid4(), command)
-    assert "腾讯" in result and "10 元" in result and "12 元" not in result
+    assert "来源" not in result and "10元" in result and "12元" not in result
 
 
 def test_invalid_latest_ohlc_falls_back_before_accepting_order():
@@ -100,7 +100,7 @@ def test_invalid_latest_ohlc_falls_back_before_accepting_order():
     command = QuantCommand(CommandSource(message_id="3", scope_kind="qq_group", target_id="123", sender_id="456"),
                            "buy", ("600000", "100"), 1, int(now.timestamp()), settings=QuantSettings(), settings_version=1)
     result = QuantTrade(source, accounts, instruments, orders, cache, corporate=MagicMock(), now=lambda: now).submit(uuid4(), command)
-    assert "腾讯" in result and orders.accept.call_args.kwargs["quote_provider"] == "tencent"
+    assert "来源" not in result and orders.accept.call_args.kwargs["quote_provider"] == "tencent"
 
 
 def test_incomplete_future_minute_is_not_used_as_current_quote():
@@ -119,4 +119,4 @@ def test_incomplete_future_minute_is_not_used_as_current_quote():
     command = QuantCommand(CommandSource(message_id="4", scope_kind="qq_group", target_id="123", sender_id="456"),
                            "buy", ("600000", "100"), 1, int(now.timestamp()), settings=QuantSettings(), settings_version=1)
     result = QuantTrade(source, accounts, instruments, orders, cache, corporate=MagicMock(), now=lambda: now).submit(uuid4(), command)
-    assert "新浪" in result and orders.accept.call_args.kwargs["quote_time"] == closed.timestamp
+    assert "时间" not in result and orders.accept.call_args.kwargs["quote_time"] == closed.timestamp

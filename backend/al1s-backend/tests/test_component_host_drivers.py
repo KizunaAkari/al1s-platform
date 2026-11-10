@@ -140,3 +140,241 @@ def test_linux_archive_keeps_remote_identity_but_probes_loaded_local_image(tmp_p
     monkeypatch.setattr('al1s.components.host.deployment_driver.probe_image',probe)
     DeploymentDriver(Deployment(),None).verify_archive(path,body)
     assert calls==[('linux-terminal',actual),('maa',actual)]
+
+
+def test_stream_gzip_round_trip_and_failed_producer(tmp_path):
+    import gzip
+    import subprocess
+    import sys
+
+    from al1s.components.host.commands import CommandRunner
+
+    runner = CommandRunner()
+    archive = tmp_path / "stream.gz"
+    payload = b"backup-data-" * 100_000
+    runner.stream_gzip(
+        [sys.executable, "-c", "import sys;sys.stdout.buffer.write(b'backup-data-'*100000)"],
+        archive,
+        30,
+    )
+    with gzip.open(archive, "rb") as source:
+        assert source.read() == payload
+
+    failed = tmp_path / "failed.gz"
+    with pytest.raises(subprocess.CalledProcessError):
+        runner.stream_gzip(
+            [sys.executable, "-c", "import sys;sys.stdout.buffer.write(b'partial');sys.exit(7)"],
+            failed,
+            30,
+        )
+    assert not failed.exists()
+    existing = tmp_path / "existing.gz"
+    existing.write_bytes(b"existing")
+    with pytest.raises(FileExistsError):
+        runner.stream_gzip([sys.executable, "-c", "pass"], existing, 30)
+    assert existing.read_bytes() == b"existing"
+
+
+def test_stream_gzip_timeout_removes_partial_file(tmp_path):
+    import subprocess
+    import sys
+
+    from al1s.components.host.commands import CommandRunner
+
+    destination = tmp_path / "timeout.gz"
+    with pytest.raises(subprocess.TimeoutExpired):
+        CommandRunner().stream_gzip(
+            [sys.executable, "-c", "import time;time.sleep(10)"], destination, 0.5
+        )
+    assert not destination.exists()
+
+
+def test_stream_gzip_failed_compressor_removes_partial_file(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+
+    from al1s.components.host import commands
+
+    start = subprocess.Popen
+
+    def launch(arguments, *args, **kwargs):
+        if len(arguments) >= 3 and "gzip.GzipFile" in arguments[2]:
+            arguments = [sys.executable, "-c", "import sys;sys.exit(23)"]
+        return start(arguments, *args, **kwargs)
+
+    monkeypatch.setattr(commands.subprocess, "Popen", launch)
+    destination = tmp_path / "compressor-failed.gz"
+    with pytest.raises(subprocess.CalledProcessError):
+        commands.CommandRunner().stream_gzip(
+            [sys.executable, "-c", "import sys;sys.stdout.buffer.write(b'x'*1000000)"],
+            destination,
+            30,
+        )
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("component", ["s3", "mqtt"])
+def test_component_directory_backup_is_compressed_and_verified(tmp_path, component):
+    import hashlib
+    import subprocess
+    import sys
+    import tarfile
+
+    from al1s.components.host.backup import backup_data
+
+    source = tmp_path / "source"
+    source.mkdir()
+    payload = b"volume-data-" * 100_000
+    (source / "payload.bin").write_bytes(payload)
+    directory = tmp_path / "recovery"
+    directory.mkdir()
+
+    class Runner:
+        corrupt = False
+
+        def run(self, arguments, timeout=30):
+            archive = directory / "data-0" / "data.tar.gz"
+            program = arguments[-1].replace("'/source'", repr(str(source)))
+            program = program.replace("'/backup/data.tar.gz'", repr(str(archive)))
+            subprocess.run([sys.executable, "-c", program], check=True, timeout=timeout)
+            if self.corrupt:
+                archive.write_bytes(archive.read_bytes()[:-8])
+            return ""
+
+    class Deployment:
+        runner = Runner()
+
+        def services(self, requested):
+            assert requested == component
+            return ["storage" if component == "s3" else "mosquitto"]
+
+        def inspect(self, service):
+            assert service == ("storage" if component == "s3" else "mosquitto")
+            return {"Mounts": [{"RW": True, "Type": "bind", "Source": str(source)}]}
+
+    deployment = Deployment()
+    result = backup_data(deployment, component, directory, "utility:image")
+    archive = directory / "data-0" / "data.tar.gz"
+    assert result == {"data-0/data.tar.gz": hashlib.sha256(archive.read_bytes()).hexdigest()}
+    assert json.loads((directory / "backups.json").read_text()) == result
+    with tarfile.open(archive, "r:gz") as packed:
+        assert packed.extractfile("data/payload.bin").read() == payload
+    directory = tmp_path / "failed-recovery"
+    directory.mkdir()
+    deployment.runner.corrupt = True
+    with pytest.raises((EOFError, OSError, tarfile.TarError)):
+        backup_data(deployment, component, directory, "utility:image")
+    assert not (directory / "backups.json").exists()
+    assert not (directory / "data-0" / "data.tar.gz").exists()
+
+
+def test_postgresql_backup_keeps_native_archive_format(tmp_path):
+    import hashlib
+
+    from al1s.components.host.backup import backup_data
+
+    directory = tmp_path / "recovery"
+    directory.mkdir()
+
+    class Runner:
+        def stream(self, arguments, destination, timeout):
+            assert "pg_dump" in arguments[-1] and "-Fc" in arguments[-1]
+            destination.write_bytes(b"native-postgresql-archive")
+
+        def run(self, arguments, timeout=30):
+            assert "pg_restore" in arguments and "/backup/database.dump" in arguments
+            return ""
+
+    class Deployment:
+        runner = Runner()
+
+        def inspect(self, service):
+            assert service == "postgres"
+            return {"Id": "postgres-id", "Image": "postgres-image"}
+
+    result = backup_data(Deployment(), "postgresql", directory, "utility:image")
+    archive = directory / "database.dump"
+    assert result == {"database.dump": hashlib.sha256(archive.read_bytes()).hexdigest()}
+    assert not list(directory.glob("*.gz"))
+
+
+@pytest.mark.parametrize("damage", ["truncated", "checksum"])
+def test_gzip_archive_validation_rejects_corruption(tmp_path, damage):
+    import tarfile
+
+    from al1s.components.host.backup import validate_gzip_archive
+
+    source = tmp_path / "payload"
+    source.write_bytes(b"important data" * 10_000)
+    archive = tmp_path / "data.tar.gz"
+    with tarfile.open(archive, "w:gz") as packed:
+        packed.add(source, arcname="payload")
+    validate_gzip_archive(archive)
+    data = archive.read_bytes()
+    data = data[:-8] if damage == "truncated" else data[:-8] + bytes([data[-8] ^ 1]) + data[-7:]
+    archive.write_bytes(data)
+    with pytest.raises((EOFError, OSError, tarfile.TarError)):
+        validate_gzip_archive(archive)
+
+
+@pytest.mark.parametrize("name", ["data-0/data.tar", "data-0/data.tar.gz"])
+def test_component_recovery_accepts_old_and_new_backup_manifest(tmp_path, monkeypatch, name):
+    import hashlib
+    import tarfile
+    from uuid import uuid4
+
+    from al1s.components.host.deployment_driver import DeploymentDriver
+    from tests.test_component_inventory import release
+
+    class Deployment:
+        settings = type("Settings", (), {"state_dir": tmp_path})()
+
+        def __init__(self):
+            self.stopped = []
+
+        def services(self, component):
+            return [component]
+
+        def stop(self, services):
+            self.stopped.append(tuple(services))
+
+        def start(self, services):
+            pass
+
+        def write_selectors(self, selectors):
+            pass
+
+    deployment = Deployment()
+    driver = DeploymentDriver(deployment, None)
+    identity = uuid4()
+    directory = driver.directory(identity)
+    directory.mkdir()
+    archive = directory / name
+    archive.parent.mkdir()
+    source = tmp_path / "protected-backup"
+    source.write_bytes(b"protected-backup")
+    with tarfile.open(archive, "w:gz" if name.endswith(".gz") else "w") as packed:
+        packed.add(source, arcname="protected-backup")
+    (directory / "snapshot.json").write_text(json.dumps({
+        "phase": "activating", "component": "postgresql",
+        "schema": "0052", "selectors": {},
+    }))
+    (directory / "backups.json").write_text(json.dumps({
+        name: hashlib.sha256(archive.read_bytes()).hexdigest(),
+    }))
+    monkeypatch.setattr("al1s.components.host.deployment_driver.schema_revision", lambda _: "0052")
+    monkeypatch.setattr(driver, "verify_original", lambda _: "failed_safe")
+    body = {**release().model_dump(mode="json"), "state": "published",
+            "row_version": 1, "created_at": "2026-10-04T00:00:00Z"}
+    assert driver.recover(identity, {"release": body}, {}) == "failed_safe"
+
+    deployment.stopped.clear()
+    archive.write_bytes(b"corrupted-backup")
+    assert driver.recover(identity, {"release": body}, {}) == "unknown"
+    assert not deployment.stopped
+    if name.endswith(".gz"):
+        (directory / "backups.json").write_text(json.dumps({
+            name: hashlib.sha256(archive.read_bytes()).hexdigest(),
+        }))
+        assert driver.recover(identity, {"release": body}, {}) == "unknown"
+        assert not deployment.stopped

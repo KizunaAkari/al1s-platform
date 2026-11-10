@@ -1,11 +1,19 @@
 import json
+import tarfile
 import time
+import zlib
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 
 from al1s.components.contracts import ComponentOperation, ComponentRelease
-from al1s.components.host.backup import backup_data, checksum, private_json, schema_revision
+from al1s.components.host.backup import (
+    backup_data,
+    checksum,
+    private_json,
+    schema_revision,
+    validate_gzip_archive,
+)
 from al1s.components.host.compose_driver import SERVICES, ComposeDeployment
 from al1s.components.host.contracts import JsonObject
 from al1s.components.host.drivers import mqtt, platform, postgresql, seaweedfs
@@ -196,6 +204,11 @@ class DeploymentDriver:
             item = (directory / name).resolve()
             if not item.is_relative_to(directory.resolve()) or checksum(item) != digest:
                 return "unknown"
+            if name.endswith(".tar.gz"):
+                try:
+                    validate_gzip_archive(item)
+                except (OSError, EOFError, tarfile.TarError, ValueError, zlib.error):
+                    return "unknown"
         self.deployment.stop(("backend",))
         self.deployment.stop(self.deployment.services(release.component))
         self.deployment.write_selectors(snapshot["selectors"])

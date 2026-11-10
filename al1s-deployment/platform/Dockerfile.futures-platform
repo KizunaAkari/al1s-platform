@@ -1,0 +1,6 @@
+ARG BASE_IMAGE=al1s-platform:freqtrade-20261028
+FROM ${BASE_IMAGE}
+COPY --from=backend --chown=al1s:al1s al1s/components/contracts.py al1s/components/operations.py /app/al1s/components/
+COPY --from=backend --chown=al1s:al1s al1s/adapters/postgres/freqtrade_models.py /app/al1s/adapters/postgres/freqtrade_models.py
+COPY --from=backend --chown=al1s:al1s migrations/versions/20261028_0061_freqtrade_futures.py /app/migrations/versions/20261028_0061_freqtrade_futures.py
+COPY --from=frontend --chown=al1s:al1s . /app/frontend/

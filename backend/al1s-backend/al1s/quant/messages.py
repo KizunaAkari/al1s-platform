@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from al1s.meme_workshop.contracts import CommandSource
 from al1s.quant.commands import QuantCommand, normalize_keyword, validate_mappings
 from al1s.quant.contracts import QuantSettings
+from al1s.trading_admin.contracts import AdminTradingSource
 
 
 class QuantCommandRequest(BaseModel):
@@ -18,6 +19,7 @@ class QuantCommandRequest(BaseModel):
     normalized_keyword: str = Field(min_length=1, max_length=32)
     settings: QuantSettings
     commands: dict[str, str]
+    reply_templates: dict[str, dict[str, str]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def authorized_snapshot(self) -> Self:
@@ -53,4 +55,31 @@ class QuantCommandRequest(BaseModel):
             self.settings_version,
             self.settings,
             tuple(self.commands.items()),
+            self.reply_templates,
         )
+
+
+class QuantReadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source: CommandSource
+    kind: Literal["balance", "positions", "trades"]
+    page: int = Field(default=1, ge=1, le=1000)
+
+
+class QuantAdminCommandRequest(QuantCommandRequest):
+    source: AdminTradingSource
+    action: Literal["open", "buy", "sell"]
+
+    @model_validator(mode="after")
+    def authorized_snapshot(self) -> Self:
+        words = validate_mappings(self.commands, set())
+        if not self.settings.enabled or normalize_keyword(self.normalized_keyword) != words[self.action]:
+            raise ValueError("quant_command_not_authorized")
+        return self
+
+
+class QuantAdminReadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source: AdminTradingSource
+    kind: Literal["balance", "positions", "trades"]
+    page: int = Field(default=1, ge=1, le=1000)

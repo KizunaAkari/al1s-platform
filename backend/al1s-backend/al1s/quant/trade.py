@@ -10,7 +10,8 @@ from al1s.adapters.postgres.quant_orders import QuantOrders
 from al1s.quant.commands import QuantCommand
 from al1s.quant.corporate_service import CorporateService
 from al1s.quant.market_rules import CHINA, check_order_quantity, check_quote
-from al1s.quant.provider_routing import PROVIDER_NAMES, eligible_sources, select_source
+from al1s.quant.presentation import order_receipt
+from al1s.quant.provider_routing import eligible_sources, select_source
 from al1s.quant.source_client import MarketSource
 
 
@@ -98,6 +99,10 @@ class QuantTrade:
             latest.close, latest.timestamp, checked_at, days, settings.max_quote_age_seconds
         )
         instrument = self.instruments.register(market, current, day)
+        if not instrument.name or instrument.name == instrument.current_code:
+            name = self.source.security_name(market.lower(), current)
+            if isinstance(name, str) and name:
+                instrument = self.instruments.set_name(instrument, name)
         self.corporate.ensure(instrument, account)
         available = (
             self.accounts.available_for(command.source.sender_id, instrument.id, day)
@@ -122,14 +127,5 @@ class QuantTrade:
             quote_price=latest.close,
             quote_provider=provider,
         )
-        state = "已受理" if created else "已存在"
-        display_provider = order.provider or provider
-        display_time = order.quote_time or latest.timestamp
-        display_price = order.quote_price if order.quote_price is not None else latest.close
-        return (
-            f"模拟委托 {str(order.id)[:8]} {state}，状态 {order.status}；"
-            f"行情 {display_price} 元，时间 {display_time:%Y-%m-%d %H:%M:%S}，"
-            f"来源 {PROVIDER_NAMES[display_provider]}。"
-            f"佣金比例 {settings.commission_rate}，最低佣金 {settings.minimum_commission}，"
-            f"卖出税 {settings.stamp_tax_rate}，滑点 {settings.slippage}。"
-        )
+        return order_receipt(order, instrument, latest.close, created=created,
+                             orders_word=dict(command.command_words).get("orders", "模拟成交"), command=command)

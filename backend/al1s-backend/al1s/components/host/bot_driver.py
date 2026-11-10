@@ -3,13 +3,14 @@ import json
 import os
 import tarfile
 import time
+import zlib
 from pathlib import Path
 from typing import cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from al1s.components.bot_contracts import BotAlias
 from al1s.components.contracts import ComponentOperation, ComponentRelease
-from al1s.components.host.backup import private_json
+from al1s.components.host.backup import private_json, validate_gzip_archive
 from al1s.components.host.bot_deployment import NAMES, SELECTORS, BotDeployment
 from al1s.components.host.bot_environment import normalize_image_metadata
 from al1s.components.host.bot_mounts import same_protection
@@ -45,10 +46,13 @@ def backup_identity(path: Path) -> tuple[int, str]:
     with path.open("rb") as source:
         for chunk in iter(lambda: source.read(1024**2), b""):
             digest.update(chunk)
-    with tarfile.open(path, "r|") as archive:
-        for member in archive:
-            if member.offset_data + member.size > size:
-                raise ValueError("bot_backup_truncated")
+    if path.name.endswith(".gz"):
+        validate_gzip_archive(path)
+    else:
+        with tarfile.open(path, "r|") as archive:
+            for member in archive:
+                if member.offset_data + member.size > size:
+                    raise ValueError("bot_backup_truncated")
     return size, digest.hexdigest()
 
 
@@ -105,6 +109,28 @@ class BotUpgradeDriver:
         original = probe_bot_image(self.deployment.runner, before["Image"])
         if alias == "qq" and original.qq_quant_v1 and not proof.qq_quant_v1:
             raise ValueError("qq_quant_runtime_required")
+        if alias == 'qq' and original.qq_freqtrade_v1 and not proof.qq_freqtrade_v1:
+            raise ValueError('qq_freqtrade_runtime_required')
+        if alias == 'qq' and original.qq_freqtrade_futures_v1 and not proof.qq_freqtrade_futures_v1:
+            raise ValueError('qq_freqtrade_futures_runtime_required')
+        if alias == 'qq' and original.qq_freqtrade_visual_v1 and not proof.qq_freqtrade_visual_v1:
+            raise ValueError('qq_freqtrade_visual_runtime_required')
+        if alias == 'qq' and original.qq_freqtrade_capital_v1 and not proof.qq_freqtrade_capital_v1:
+            raise ValueError('qq_freqtrade_capital_runtime_required')
+        if alias == 'qq' and original.qq_command_replies_v1 and not proof.qq_command_replies_v1:
+            raise ValueError('qq_command_replies_runtime_required')
+        if alias == 'qq' and original.qq_ai_v1 and not proof.qq_ai_v1:
+            raise ValueError('qq_ai_runtime_required')
+        if alias == 'qq' and original.qq_ai_personas_v1 and not proof.qq_ai_personas_v1:
+            raise ValueError('qq_ai_personas_runtime_required')
+        if alias == 'qq' and original.qq_ai_network_routes_v1 and not proof.qq_ai_network_routes_v1:
+            raise ValueError('qq_ai_network_routes_runtime_required')
+        if alias == 'qq' and original.qq_ai_smart_reply_v1 and not proof.qq_ai_smart_reply_v1:
+            raise ValueError('qq_ai_smart_reply_runtime_required')
+        if alias == 'qq' and original.qq_comfy_drawing_v1 and not proof.qq_comfy_drawing_v1:
+            raise ValueError('qq_comfy_drawing_runtime_required')
+        if alias == 'qq' and original.qq_ai_group_reply_v1 and not proof.qq_ai_group_reply_v1:
+            raise ValueError('qq_ai_group_reply_runtime_required')
         if (alias == "qq" and original.qq_protocol_mode == "pmhq" and (
                 proof.qq_protocol_mode != "pmhq" or not proof.qq_headed_v1
                     or proof.qq_client_version != original.qq_client_version
@@ -179,13 +205,23 @@ class BotUpgradeDriver:
             raise ValueError("bot_not_quiesced")
         snapshot["phase"] = "quiesced"
         private_json(self.directory(identity) / "snapshot.json", snapshot)
-        backup = self.directory(identity) / "data.tar"
+        backup = self.directory(identity) / "data.tar.gz"
+        legacy = self.directory(identity) / "data.tar"
+        if legacy.exists() and not backup.exists():
+            backup = legacy
         if not backup.exists():
-            self.deployment.runner.stream(
-                ["docker", "cp", f"{NAMES[alias]}:{DATA[alias]}/.", "-"], backup, 600
-            )
+            temporary = self.directory(identity) / f".{uuid4()}.tmp.gz"
+            try:
+                self.deployment.runner.stream_gzip(
+                    ["docker", "cp", f"{NAMES[alias]}:{DATA[alias]}/.", "-"], temporary, 600
+                )
+                size, digest = backup_identity(temporary)
+                os.replace(temporary, backup)
+            finally:
+                temporary.unlink(missing_ok=True)
+        else:
+            size, digest = backup_identity(backup)
         os.chmod(backup, 0o600)
-        size, digest = backup_identity(backup)
         snapshot.update(data_backup_sha256=digest, data_backup_bytes=size, phase="backed_up")
         private_json(self.directory(identity) / "snapshot.json", snapshot)
         assert release.candidate_image
@@ -356,8 +392,16 @@ class BotUpgradeDriver:
         if state["Image"] == snapshot["candidate_id"]:
             if snapshot["data_format"] != "same-format" or snapshot.get("phase") != "backed_up":
                 return "unknown"
-            size, digest = backup_identity(self.directory(identity) / "data.tar")
-            if (size, digest) != (snapshot["data_backup_bytes"], snapshot["data_backup_sha256"]):
+            expected = (snapshot["data_backup_bytes"], snapshot["data_backup_sha256"])
+            valid = False
+            for name in ("data.tar.gz", "data.tar"):
+                try:
+                    if backup_identity(self.directory(identity) / name) == expected:
+                        valid = True
+                        break
+                except (OSError, EOFError, tarfile.TarError, ValueError, zlib.error):
+                    continue
+            if not valid:
                 return "unknown"
         original = json.loads(
             self.deployment.runner.run(["docker", "image", "inspect", snapshot["before_image"]])

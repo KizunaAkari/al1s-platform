@@ -29,7 +29,7 @@ def test_backtest_uses_complete_source_data_and_reports_its_rules():
         settings_version=1, settings=QuantSettings())
     result = QuantBacktest(source, accounts, instruments, cache, repository, native=native,
                            now=lambda: datetime.fromisoformat("2026-10-28T10:00:00+08:00")).submit(uuid4(), command)
-    assert "新浪" in result and "75%" in result and "10.00%" in result
+    assert "新浪" in result and "75%" in result and "10%" in result
     repository.complete.assert_called_once()
 
 

@@ -1,0 +1,14 @@
+ARG BASE_IMAGE=al1s-plachta:qq-futures-2.3.0
+FROM ${BASE_IMAGE}
+USER root
+COPY requirements.freqtrade.lock /opt/al1s/requirements.freqtrade.lock
+RUN /opt/al1s-freqtrade-venv/bin/pip install --no-cache-dir --constraint /opt/al1s/requirements.freqtrade.lock matplotlib==3.10.9 \
+ && /opt/al1s-freqtrade-venv/bin/pip check
+COPY --from=backend al1s/freqtrade/ /opt/al1s/al1s/freqtrade/
+COPY --from=backend al1s/adapters/postgres/freqtrade_models.py al1s/adapters/postgres/freqtrade_repository.py al1s/adapters/postgres/quant_models.py al1s/adapters/postgres/quant_replies.py /opt/al1s/al1s/adapters/postgres/
+COPY --from=backend al1s/quant/qq_dispatch.py /opt/al1s/al1s/quant/qq_dispatch.py
+COPY --from=backend al1s/meme_workshop/onebot.py al1s/meme_workshop/runtime_identity.py al1s/meme_workshop/runtime_probe.py /opt/al1s/al1s/meme_workshop/
+COPY --from=backend al1s/components/contracts.py al1s/components/operations.py /opt/al1s/al1s/components/
+RUN python -c "import hashlib,json,pathlib; root=pathlib.Path('/opt/al1s/al1s'); p=pathlib.Path('/opt/al1s/runtime-manifest.json'); m=json.loads(p.read_text()); m.update(runtime_version='2.4.0',qq_freqtrade_visual_v1=True,source_sha256=hashlib.sha256(b''.join(f.read_bytes() for f in sorted(root.rglob('*.py')))).hexdigest()); m['requirements_sha256']=hashlib.sha256(pathlib.Path('/tmp/requirements.lock').read_bytes()+pathlib.Path('/tmp/requirements.quant.lock').read_bytes()+pathlib.Path('/opt/al1s/requirements.freqtrade.lock').read_bytes()).hexdigest(); p.write_text(json.dumps(m))"
+LABEL org.al1s.runtime-version=2.4.0 org.al1s.qq-freqtrade-visual=1
+RUN python -m al1s.meme_workshop.runtime_probe

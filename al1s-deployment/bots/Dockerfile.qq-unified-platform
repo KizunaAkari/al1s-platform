@@ -1,0 +1,14 @@
+# Start from the verified current platform so unrelated services and APIs remain intact.
+ARG PLATFORM_BASE=al1s-platform:qq-unified-inventory-budget-20261102
+FROM ${PLATFORM_BASE}
+COPY --from=backend --chown=al1s:al1s al1s/adapters/postgres/bot_ai_history_models.py /app/al1s/adapters/postgres/bot_ai_history_models.py
+COPY --from=backend --chown=al1s:al1s al1s/adapters/postgres/bot_ai_history.py /app/al1s/adapters/postgres/bot_ai_history.py
+COPY --from=backend --chown=al1s:al1s al1s/adapters/postgres/bot_drawing_models.py al1s/adapters/postgres/secret_repository.py /app/al1s/adapters/postgres/
+COPY --from=backend --chown=al1s:al1s al1s/bot_ai/history.py /app/al1s/bot_ai/history.py
+COPY --from=backend --chown=al1s:al1s al1s/api/meme_proxy.py /app/al1s/api/meme_proxy.py
+COPY --from=backend --chown=al1s:al1s al1s/meme_workshop/transport.py /app/al1s/meme_workshop/transport.py
+COPY --from=backend --chown=al1s:al1s migrations/env.py /app/migrations/env.py
+COPY --from=backend --chown=al1s:al1s migrations/versions/20261103_0071_bot_drawing.py /app/migrations/versions/20261103_0071_bot_drawing.py
+COPY --from=backend --chown=al1s:al1s al1s/components/contracts.py al1s/components/operations.py al1s/components/host_client.py al1s/components/types.py al1s/components/inventory.py /app/al1s/components/
+COPY --from=frontend --chown=al1s:al1s . /app/frontend/
+RUN python -m alembic heads && python -c "import al1s.api.meme_proxy; import al1s.components.operations"

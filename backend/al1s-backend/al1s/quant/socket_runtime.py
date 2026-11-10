@@ -118,7 +118,14 @@ def run() -> None:
     )
     trade = QuantTrade(source, accounts, instruments, orders, cache, corporate=corporate)
     backtest = QuantBacktest(source, accounts, instruments, cache, backtests)
-    service = QuantService(accounts, orders, trade=trade.submit, backtest=backtest.submit)
+    service = QuantService(accounts, orders, trade=trade.submit, backtest=backtest.submit,
+                           name_source=source, instruments=instruments)
+    ai_settings_repository = QuantSettingsRepository(sessions)
+
+    def read_for_ai(source, snapshot, kind, page, service_id):
+        if ai_settings_repository.get(service_id).settings != snapshot:
+            return {"status": "busy", "code": "quant_configuration_pending"}
+        return service.query_for_ai(source, snapshot, kind, page)
     health = QuantHealth(
         database=lambda: database_available(database),
         source=source.health,
@@ -130,6 +137,7 @@ def run() -> None:
     app = create_process_app(
         token,
         command_handler=service.execute,
+        read_handler=read_for_ai,
         executor=PaperExecution(orders, source, cache),
         backtests=backtests,
         corporate=corporate,

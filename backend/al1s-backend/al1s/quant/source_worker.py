@@ -8,6 +8,9 @@ import re
 import sys
 from datetime import datetime, timedelta
 from importlib.metadata import version
+from queue import Empty, Queue
+from threading import Thread
+from time import monotonic
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
@@ -53,14 +56,30 @@ def validate_request(value: object) -> dict:
         "daily_sina",
         "calendar",
         "corporate",
+        "name",
     }:
         raise ValueError("quant_source_request_invalid")
     kind = value["kind"]
+    if kind == "name" and "symbols" in value:
+        symbols = value["symbols"]
+        if (set(value) != {"kind", "symbols"} or not isinstance(symbols, list)
+                or not 1 <= len(symbols) <= 25):
+            raise ValueError("quant_source_request_invalid")
+        seen = set()
+        for symbol in symbols:
+            if not isinstance(symbol, dict) or set(symbol) != {"market", "code"}:
+                raise ValueError("quant_source_request_invalid")
+            validate_request({"kind": "name", **symbol})
+            key = (symbol["market"], symbol["code"])
+            if key in seen:
+                raise ValueError("quant_source_request_invalid")
+            seen.add(key)
+        return value
     expected = (
         {"kind", "start", "end"}
         if kind == "calendar"
         else {"kind", "market", "code"}
-        if kind in {"minute", "minute_east", "corporate"} or kind.startswith("minute_")
+        if kind in {"minute", "minute_east", "corporate", "name"} or kind.startswith("minute_")
         else {"kind", "market", "code", "start", "end", "adjustment"}
     )
     if kind in {f"minute_{provider}" for provider in EXTRA_PROVIDERS} and (
@@ -136,6 +155,49 @@ def limited_request(session, method: str, url: str, **kwargs):
         return response
     finally:
         response.close()
+
+
+def fetch_name(session, value: dict) -> list[dict]:
+    symbol = value["market"]+value["code"]
+    payload = limited_request(session, "GET", "https://ifzq.gtimg.cn/appstock/app/kline/mkline",
+                               params={"param":f"{symbol},m1,,1"}).json()
+    row = payload.get("data", {}).get(symbol, {}).get("qt", {}).get(symbol)
+    if (isinstance(row, list) and len(row) >= 3 and row[2] == value["code"]
+        and isinstance(row[1], str) and 0 < len(row[1].strip()) <= 64 and row[1].isprintable()):
+        return [{"name":row[1].strip()}]
+    return []
+
+
+def fetch_names(symbols: list[dict], session_factory) -> list[dict]:
+    pending, found = Queue(), Queue()
+    for symbol in symbols:
+        pending.put(symbol)
+
+    def collect():
+        with session_factory() as session:
+            session.trust_env = False
+            while True:
+                try:
+                    symbol = pending.get_nowait()
+                except Empty:
+                    return
+                try:
+                    rows = fetch_name(session, symbol)
+                    if rows:
+                        found.put({**symbol, "name": rows[0]["name"]})
+                except Exception:
+                    continue
+
+    workers = [Thread(target=collect, daemon=True) for _ in range(min(5, len(symbols)))]
+    for worker in workers:
+        worker.start()
+    deadline = monotonic() + 4
+    for worker in workers:
+        worker.join(max(0, deadline - monotonic()))
+    result = []
+    while not found.empty():
+        result.append(found.get_nowait())
+    return result
 
 
 def fetch_extra(session, value: dict) -> list[dict]:
@@ -245,6 +307,10 @@ def fetch(value: dict) -> list[dict[str, str]]:
     with requests.Session() as session:
         session.trust_env = False
         configure_proxy(session, value["kind"], os.environ.get("AL1S_QUANT_EASTMONEY_PROXY"))
+        if value["kind"] == "name":
+            if "symbols" in value:
+                return fetch_names(value["symbols"], requests.Session)
+            return fetch_name(session, value)
         if value["kind"] in {
             f"{frequency}_{provider}"
             for frequency in ("minute", "daily")

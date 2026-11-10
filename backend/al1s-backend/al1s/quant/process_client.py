@@ -8,7 +8,7 @@ from uuid import UUID
 
 from al1s.adapters.postgres.quant_settings import QuantSettingsRecord
 from al1s.quant.commands import QuantCommand
-from al1s.quant.messages import QuantCommandRequest
+from al1s.quant.messages import QuantAdminCommandRequest, QuantAdminReadRequest, QuantCommandRequest
 
 Request = Callable[[str, str, bytes | None, dict[str, str]], tuple[int, bytes]]
 
@@ -36,7 +36,8 @@ class QuantProcessClient:
         self, method: str, path: str, body: bytes | None, headers: dict[str, str]
     ) -> tuple[int, bytes]:
         connection = _UnixConnection(
-            self._path, 150 if path.startswith("/internal/command/") else 3
+            self._path, 150 if path.startswith(("/internal/command/", "/internal/admin/command/"))
+            else (10 if path.startswith(("/internal/query/", "/internal/admin/query/")) else 3)
         )
         try:
             connection.request(method, path, body=body, headers=headers)
@@ -90,6 +91,7 @@ class QuantProcessClient:
             normalized_keyword=command.normalized_keyword,
             settings=command.settings,
             commands=dict(command.command_words),
+            reply_templates=command.reply_templates,
         )
         status, body = self._request(
             "POST",
@@ -112,8 +114,45 @@ class QuantProcessClient:
             raise ValueError("quant_process_response_invalid")
         return data["content"]
 
+    def execute_admin(self, service_id: UUID, command: QuantCommand) -> str:
+        data = QuantAdminCommandRequest(source=command.source, action=command.action, arguments=list(command.arguments),
+            mapping_version=command.mapping_version, settings_version=command.settings_version,
+            event_timestamp=command.event_timestamp, normalized_keyword=command.normalized_keyword,
+            settings=command.settings, commands=dict(command.command_words), reply_templates=command.reply_templates)
+        status, body = self._request("POST", f"/internal/admin/command/{service_id}", data.model_dump_json().encode(), self._headers)
+        if status != 200:
+            raise ValueError("quant_process_unavailable")
+        result = json.loads(body)
+        if not isinstance(result, dict) or set(result) != {"content"} or not isinstance(result["content"], str) or not 1 <= len(result["content"]) <= 4096:
+            raise ValueError("quant_process_response_invalid")
+        return result["content"]
+
+    def query_admin(self, service_id: UUID, data: QuantAdminReadRequest) -> dict:
+        status, body = self._request("POST", f"/internal/admin/query/{service_id}", data.model_dump_json().encode(), self._headers)
+        if status != 200:
+            raise ValueError("quant_read_unavailable")
+        result = json.loads(body)
+        if not isinstance(result, dict):
+            raise ValueError("quant_process_response_invalid")
+        return result
+
     def close(self) -> None:
         pass
+
+    def query_for_ai(self, service_id: UUID, data) -> dict:
+        status, body = self._request("POST", f"/internal/query/{service_id}",
+                                     data.model_dump_json().encode(), self._headers)
+        if status != 200:
+            raise ValueError("quant_read_unavailable")
+        try:
+            result = json.loads(body)
+        except (ValueError, UnicodeDecodeError) as error:
+            raise ValueError("quant_read_invalid") from error
+        if not isinstance(result, dict) or result.get("status") not in {
+            "success", "busy", "failed", "denied"
+        }:
+            raise ValueError("quant_read_invalid")
+        return result
 
     def status(self) -> dict:
         status, body = self._request("GET", "/internal/health", None, self._headers)

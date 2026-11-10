@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
 from al1s.bots.container_control import Alias, ContainerCommand, ContainerState, ControlError
+from al1s.bots.log_contracts import LogLevel, LogPage, LogSource
 from al1s.infrastructure.direct_http import NoRedirect
 
 
@@ -40,3 +41,22 @@ class ControlClient:
             raise ControlError(code, exc.code if exc.code in {404, 409} else 502) from exc
         except (OSError, URLError, ValueError) as exc:
             raise ControlError("control_unavailable_or_result_unknown") from exc
+
+    def logs(self, alias: Alias, source: LogSource, level: LogLevel) -> dict:
+        if alias not in {"qq", "discord"} or source not in {"all", "bot", "backend", "gateway", "ops"} or level not in {"all", "important"}:
+            raise ControlError("invalid_log_filter", 422)
+        query = urlencode({"source": source, "level": level})
+        request = Request(f"{self.url}/logs/{alias}?{query}",
+                          headers={"Authorization": f"Bearer {self.token}"})
+        try:
+            opener = build_opener(ProxyHandler({}), NoRedirect())
+            with opener.open(request, timeout=22) as response:
+                body = response.read(262_145)
+                if len(body) > 262_144:
+                    raise ControlError("invalid_control_response", 502)
+                return LogPage.model_validate_json(body).model_dump(mode="json")
+        except HTTPError as exc:
+            exc.close()
+            raise ControlError("bot_logs_unavailable", 503) from exc
+        except (OSError, URLError, ValueError) as exc:
+            raise ControlError("bot_logs_unavailable", 503) from exc

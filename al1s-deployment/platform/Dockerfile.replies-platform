@@ -1,0 +1,8 @@
+ARG BASE_IMAGE=al1s-platform:quant-reply-20261029
+FROM ${BASE_IMAGE}
+COPY --from=backend --chown=al1s:al1s al1s/api/meme_proxy.py /app/al1s/api/
+COPY --from=backend --chown=al1s:al1s al1s/components/contracts.py al1s/components/operations.py /app/al1s/components/
+COPY --from=backend --chown=al1s:al1s al1s/adapters/postgres/trading_reply_models.py /app/al1s/adapters/postgres/
+COPY --from=backend --chown=al1s:al1s migrations/env.py /app/migrations/
+COPY --from=backend --chown=al1s:al1s migrations/versions/20261029_0064_trading_reply_templates.py /app/migrations/versions/
+COPY --from=frontend --chown=al1s:al1s . /app/frontend/

@@ -68,7 +68,18 @@ class QqCandidateBuilder:
             if (release.native_version != "8.3.2" or proof.native_version != release.native_version
                     or proof.runtime_version != release.runtime_version
                     or proof.qq_protocol_mode != "pmhq" or not proof.qq_headed_v1
-                    or (release.runtime_version == "2.1.0" and not proof.qq_quant_v1)):
+                    or (release.runtime_version in {'2.1.0', '2.2.0', '2.3.0', '2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'} and not proof.qq_quant_v1)
+                    or (release.runtime_version in {'2.2.0', '2.3.0', '2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'} and not proof.qq_freqtrade_v1)
+                    or (release.runtime_version in {'2.3.0', '2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'} and not proof.qq_freqtrade_futures_v1)
+                    or (release.runtime_version in {'2.4.0', '2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'} and not proof.qq_freqtrade_visual_v1)
+                    or (release.runtime_version in {'2.5.0', '2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'} and not proof.qq_freqtrade_capital_v1)
+                    or (release.runtime_version in {'2.6.0', '2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'} and not proof.qq_command_replies_v1)
+                    or (release.runtime_version in {'2.7.0', '2.7.1', '2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'} and not proof.qq_ai_v1)
+                    or (release.runtime_version in {'2.8.0', '2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'} and not proof.qq_ai_personas_v1)
+                    or (release.runtime_version in {'2.9.0', '2.10.0', '2.11.0', '2.12.0', '2.13.0'} and not proof.qq_ai_network_routes_v1)
+                    or (release.runtime_version in {'2.10.0', '2.11.0', '2.12.0', '2.13.0'} and not proof.qq_ai_group_reply_v1)
+                    or (release.runtime_version in {'2.11.0', '2.12.0', '2.13.0'} and not proof.qq_ai_smart_reply_v1)
+                    or (release.runtime_version == '2.13.0' and not proof.qq_comfy_drawing_v1)):
                 raise ValueError("qq_headed_candidate_unverified")
             # The frozen artifact already embeds the reviewed glibc native package.
             # The official musl registry image is discovery metadata, never copied.

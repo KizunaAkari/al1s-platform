@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from al1s.api.appearance import router as appearance_router
 from al1s.api.bot_containers import router as bot_containers_router
 from al1s.api.bot_updates import router as bot_updates_router
+from al1s.api.qq_device_identity import router as qq_device_identity_router
 from al1s.api.bots import router as bots_router
 from al1s.api.components import router as components_router
 from al1s.api.device_paths import router as device_paths_router
@@ -19,9 +20,8 @@ from al1s.api.maa_catalog import router as maa_catalog_router
 from al1s.api.maa_export import router as maa_export_router
 from al1s.api.maa_images import router as maa_images_router
 from al1s.api.maa_import_operations import router as maa_import_operations_router
-from al1s.api.meme_proxy import router as meme_workshop_router
 from al1s.api.notifications import router as notifications_router
-from al1s.api.qq_device_identity import router as qq_device_identity_router
+from al1s.api.meme_proxy import router as meme_workshop_router
 from al1s.api.reviews import router as reviews_router
 from al1s.api.system import router as system_router
 from al1s.api.target_devices import router as target_devices_router
@@ -32,12 +32,12 @@ from al1s.api.tasks import router as tasks_router
 from al1s.api.terminal_artifacts import router as terminal_artifacts_router
 from al1s.api.terminal_blobs import router as terminal_blobs_router
 from al1s.api.terminal_delivery import router as terminal_delivery_router
-from al1s.api.terminal_identity import router as terminal_identity_router
 from al1s.api.terminal_mqtt import router as terminal_mqtt_router
 from al1s.api.terminal_quick_tests import router as terminal_quick_tests_router
-from al1s.api.terminal_reachability import router as reachability_router
 from al1s.api.terminal_setup_checks import router as setup_checks_router
 from al1s.api.terminals import router as terminals_router
+from al1s.api.terminal_identity import router as terminal_identity_router
+from al1s.api.terminal_reachability import router as reachability_router
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(lineup_router, tags=['lineup'])
